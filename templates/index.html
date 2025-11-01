@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Чат с Gemini</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        #chat { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: auto; background-color: white; margin-bottom: 10px; }
+        .user-message { text-align: right; color: blue; }
+        .ai-message { text-align: left; color: green; }
+        input[type="text"] { width: 70%; padding: 10px; }
+        button { width: 25%; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Чат с Gemini</h1>
+    <div id="chat"></div>
+    <input type="text" id="userInput" placeholder="Введите ваш вопрос...">
+    <button onclick="sendMessage()">Отправить</button>
+    <button onclick="clearHistory()" style="width: 100%; margin-top: 10px; background-color: #f0ad4e;">Очистить историю</button>
+
+    <script>
+        const chatDiv = document.getElementById('chat');
+        const userInput = document.getElementById('userInput');
+
+        // --- ИЗМЕНЕНИЕ 1: Получаем или создаем User ID ---
+        // Пытаемся получить ID из локального хранилища браузера
+        let userId = localStorage.getItem('chat_user_id');
+        if (!userId) {
+            // Если ID нет, генерируем новый и сохраняем его
+            userId = crypto.randomUUID(); // Встроенная функция для генерации UUID
+            localStorage.setItem('chat_user_id', userId);
+        }
+        console.log("User ID:", userId); // Для отладки
+        // --- Конец Изменения 1 ---
+
+        function addMessageToChat(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = role === 'user' ? 'user-message' : 'ai-message';
+            // Используем innerText для безопасного отображения текста
+            messageDiv.innerText = `${role === 'user' ? 'Вы:' : 'Gemini:'} ${content}`;
+            chatDiv.appendChild(messageDiv);
+            chatDiv.scrollTop = chatDiv.scrollHeight; // Прокрутка вниз
+        }
+
+        function sendMessage() {
+            const message = userInput.value;
+            if (!message.trim()) return;
+
+            addMessageToChat('user', message);
+            userInput.value = '';
+
+            fetch('/send_message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                // --- ИЗМЕНЕНИЕ 2: Добавляем user_id в тело запроса ---
+                body: JSON.stringify({ 
+                    message: message,
+                    user_id: userId // Отправляем наш ID
+                })
+                // --- Конец Изменения 2 ---
+            })
+            .then(response => {
+                // Добавим проверку на ошибки HTTP (например, 500)
+                if (!response.ok) {
+                    return response.json().then(err => { 
+                        throw new Error(err.detail || 'Ошибка сервера'); 
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Бэкенд теперь не возвращает 'error', он возвращает 'detail' при ошибке
+                // Но наша проверка response.ok выше уже обработала это.
+                addMessageToChat('ai', data.reply);
+            })
+            .catch(error => {
+                console.error('Ошибка:', error);
+                addMessageToChat('ai', `Ошибка: ${error.message}`);
+            });
+        }
+
+        // --- (Опционально) ИЗМЕНЕНИЕ 3: Функция для кнопки очистки истории ---
+        function clearHistory() {
+            if (!confirm("Вы уверены, что хотите очистить историю чата?")) {
+                return;
+            }
+
+            fetch('/clear_history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                chatDiv.innerHTML = ''; // Очищаем поле чата на клиенте
+                addMessageToChat('ai', 'История чата очищена.');
+            })
+            .catch(error => {
+                console.error('Ошибка очистки:', error);
+                addMessageToChat('ai', 'Не удалось очистить историю.');
+            });
+        }
+        // --- Конец Изменения 3 ---
+
+
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
