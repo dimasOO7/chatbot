@@ -9,14 +9,14 @@ from typing import Dict, List, Any # Импортируем типы для хр
 from fastapi.staticfiles import StaticFiles   
 # Загрузка переменных окружения
 load_dotenv()
-API_KEY = os.environ.get("HF_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-if not API_KEY:
+if not GEMINI_API_KEY:
     raise ValueError("Переменная окружения GEMINI_API_KEY не установлена.")
 
 client = OpenAI(
-    api_key= API_KEY,
-    base_url="https://router.huggingface.co/v1"
+    api_key= GEMINI_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 # Инициализация приложения FastAPI
@@ -88,7 +88,7 @@ async def send_message(req: MessageRequest):
     try:
         # 3. Вызов API завершения чата OpenAI
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-20b:cheapest", 
+            model="gemini-2.5-flash", 
             messages=messages_to_send # <--- ИЗМЕНЕНО: Отправляем всю историю
         )
 

@@ -4,11 +4,22 @@ const userInput = document.getElementById('userInput');
 
 // --- User ID ---
 let userId = localStorage.getItem('chat_user_id');
-if (!userId) {
-    userId = crypto.randomUUID();
+
+// Если ID не существует, сгенерировать его. 
+// Также можно добавить проверку на пустую строку, на всякий случай.
+if (!userId || userId === "") {
+    // Используем window.crypto.randomUUID() для лучшей совместимости
+    if (typeof window.crypto.randomUUID === 'function') {
+        userId = window.crypto.randomUUID();
+    } else {
+        // Запасной вариант для старых браузеров (хотя для чата UUID лучше)
+        userId = 'temp-user-' + Date.now(); 
+    }
     localStorage.setItem('chat_user_id', userId);
 }
 console.log("User ID:", userId);
+// Убедимся, что отправляется строка, а не объект или null (хотя JSON.stringify должен это делать)
+const finalUserId = String(userId);
 
 // --- Авто-рост textarea ---
 function autoResize() {
@@ -62,8 +73,18 @@ function sendMessage() {
     })
         .then(response => {
             if (!response.ok) {
+                // Если статус 422 или другая ошибка, читаем тело для диагностики
                 return response.json().then(err => {
-                    throw new Error(err.detail || 'Ошибка сервера');
+                    // Логируем детальную ошибку в консоль
+                    console.error('Ошибка сервера. Детали:', JSON.stringify(err, null, 2));
+                    
+                    // Форматируем сообщение для пользователя на основе деталей ошибки
+                    const detailMessage = err.detail && Array.isArray(err.detail) 
+                        ? err.detail.map(d => `${d.loc.join('.')}: ${d.msg}`).join('; ')
+                        : (err.detail || 'Неизвестная ошибка сервера');
+                        
+                    // Бросаем ошибку с детальным сообщением
+                    throw new Error(`Ошибка API (${response.status}): ${detailMessage}`);
                 });
             }
             return response.json();
@@ -72,7 +93,8 @@ function sendMessage() {
             addMessageToChat('ai', data.reply);
         })
         .catch(error => {
-            console.error('Ошибка:', error);
+            console.error('Финальная ошибка:', error);
+            // Выводим пользователю сообщение об ошибке, используя полученный error.message
             addMessageToChat('ai', `Ошибка: ${error.message}`);
         });
 }
