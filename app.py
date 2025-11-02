@@ -6,17 +6,17 @@ from dotenv import load_dotenv
 import os
 import uvicorn
 from typing import Dict, List, Any # Импортируем типы для хранилища
-
+from fastapi.staticfiles import StaticFiles   
 # Загрузка переменных окружения
 load_dotenv()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+API_KEY = os.environ.get("HF_TOKEN")
 
-if not GEMINI_API_KEY:
+if not API_KEY:
     raise ValueError("Переменная окружения GEMINI_API_KEY не установлена.")
 
 client = OpenAI(
-    api_key= GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key= API_KEY,
+    base_url="https://router.huggingface.co/v1"
 )
 
 # Инициализация приложения FastAPI
@@ -24,7 +24,7 @@ app = FastAPI(
     title="API чата OpenAI с использованием FastAPI",
     description="Простой сервис для пересылки сообщений чата модели GPT-3.5-Turbo.",
 )
-
+app.mount("/static", StaticFiles(directory="static"), name="static")
 # --- Хранилище истории чатов (В ПАМЯТИ) ---
 # ВНИМАНИЕ: Это хранилище находится в памяти.
 # Вся история будет потеряна при перезапуске сервера.
@@ -33,7 +33,7 @@ chat_histories: Dict[str, List[Dict[str, Any]]] = {}
 
 # --- Системный промпт ---
 # Вынесем его в константу для удобства
-SYSTEM_PROMPT = {"role": "system", "content": "Вы отзывчивый и пунктуальный помощник. Отвечаете профессионально и чётко. Не используйте любое форматирование. Отвечайте одним абзацем"}
+SYSTEM_PROMPT = {"role": "system", "content": "Вы отзывчивый и пунктуальный помощник. Отвечаете профессионально и чётко. "}
 
 
 # Модель Pydantic для валидации тела запроса
@@ -88,7 +88,7 @@ async def send_message(req: MessageRequest):
     try:
         # 3. Вызов API завершения чата OpenAI
         completion = client.chat.completions.create(
-            model="gemini-2.5-flash", 
+            model="openai/gpt-oss-20b:cheapest", 
             messages=messages_to_send # <--- ИЗМЕНЕНО: Отправляем всю историю
         )
 
