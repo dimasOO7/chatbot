@@ -1,84 +1,65 @@
 <!DOCTYPE html>
-<html  lang="ru">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Krona+One&display=swap" rel="stylesheet">
-    <title>PNIbot</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    
-    <style>
-        /* Стили для кнопки удаления чата */
-        .chat-item {
-            position: relative;
-            /* ... другие стили ... */
-        }
-        .delete-chat-btn {
-            position: absolute;
-            top: 50%;
-            right: 10px;
-            transform: translateY(-50%);
-            cursor: pointer;
-            font-size: 16px;
-            opacity: 0.5;
-            transition: opacity 0.2s;
-            padding: 5px;
-        }
-        .chat-item:hover .delete-chat-btn {
-            opacity: 1;
-        }
-        .delete-chat-btn:hover {
-            color: red; /* или другой цвет при наведении */
-        }
-        
-        /* Немного сместим .chat-info, чтобы текст не заезжал под кнопку */
-        .chat-info {
-             padding-right: 30px; /* Даем место для кнопки */
-        }
 
-        /* Стиль для <p> внутри .ai-message, чтобы markdown-абзацы не имели своих отступов */
-        .ai-message p {
-            display: inline; /* Убираем блочность и отступы <p> от marked.js */
-            margin: 0;
-            padding: 0;
-        }
-    </style>
+    <title>PNIbot</title>
+
+    <link rel="stylesheet" href="/static/styles.css" />
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
+
 <body>
     <video autoplay muted loop playsinline id="bg-video">
         <source src="/static/background.mp4" type="video/mp4">
         Ваш браузер не поддерживает видео.
     </video>
+
     <div id="app-container">
-        <aside id="sidebar">
-            <div class="sidebar-header">
-                <h2>PNIchat</h2>
-                <button id="new-chat-btn" onclick="createNewChat()">+ Новый чат</button>
-            </div>
 
-            <div class="search-box">
-                <input type="text" id="search-chats" placeholder="Поиск в чатах" oninput="filterChats()">
-                <span class="search-icon"></span>
-            </div>
+        <div id="sidebar-wrapper">
+            <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
-            <div id="chats-list">
+            <aside id="sidebar">
+                <div class="sidebar-header">
+                    <h2>PNIchat</h2>
+                    <button id="new-chat-btn" onclick="createNewChat()">+ Новый чат</button>
                 </div>
 
-            <div class="sidebar-footer">
-                <div class="user-info">
-                    <span class="avatar">A</span>
-                    <span>WIP</span>
+                <div class="search-box">
+                    <input type="text" id="search-chats" placeholder="Поиск в чатах" oninput="filterChats()">
+                    <span class="search-icon"></span>
                 </div>
-            </div>
-        </aside>
+
+                <div id="chats-list"></div>
+
+                <div class="sidebar-footer">
+                    <div class="user-info">
+                        <span class="avatar">A</span>
+                        <span>WIP</span>
+                    </div>
+                </div>
+            </aside>
+        </div>
 
         <main id="main-chat">
             <div id="chat-header">
-                <span class="model-label">WIP</span>
-                <button id="settings-btn" title="Настройки">⚙️WIP</button>
+                <div class="personality-selector-wrapper">
+                    <label for="personality-selector">Режим:</label>
+                    <select id="personality-selector">
+                        <option value="auto">Авто-выбор</option>
+                        <option value="default">Помощник по умолчанию</option>
+                        <option value="marketing">Маркетолог</option>
+                        <option value="legal">Юридический помощник</option>
+                        <option value="analyst">Бизнес-аналитик</option>
+                    </select>
+                </div>
             </div>
 
             <div id="chat"></div>
@@ -87,9 +68,9 @@
                 <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
                 <button onclick="sendMessageStream()" id="send-message">→</button>
             </div>
-
-            </main>
+        </main>
     </div>
+
     <script src="/static/scripts.js"></script>
 </body>
 </html>

@@ -11,19 +11,34 @@ from starlette.responses import StreamingResponse  # <-- Импорт для с�
 import aiosqlite
 import json
 import datetime
+import asyncio # <-- Импортирован для canned response
 
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
 if not GEMINI_API_KEY:
     raise ValueError("Переменная окружения GEMINI_API_KEY не установлена.")
 
-client = OpenAI(
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Добавлен клиент Cerebras ***
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
+if not CEREBRAS_API_KEY:
+    raise ValueError("Переменная окружения CEREBRAS_API_KEY не установлена.")
+
+# Клиент для Gemini (генерация ответов)
+gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
+
+# Клиент для Cerebras (фильтрация и авто-выбор)
+cerebras_client = OpenAI(
+    api_key=CEREBRAS_API_KEY,
+    base_url="https://api.cerebras.ai/v1"
+)
+CEREBRAS_MODEL_ID = "llama-3.3-70b"
+# *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
 
 # --- Инициализация приложения ---
 app = FastAPI(
@@ -61,17 +76,58 @@ async def shutdown_event():
     await app.state.db.close()
     print("🧹 Соединение с базой закрыто.")
 
-# --- Системный промпт ---
-SYSTEM_PROMPT = {
+# --- Системные промпты (Личности) ---
+DEFAULT_PROMPT = {
     "role": "system",
-    "content": "Вы отзывчивый и пунктуальный помощник. Отвечаете профессионально и чётко."
+    "content": "Вы — PNIbot, помощник по ведению малого бизнеса. Ваша задача — отвечать на вопросы, связанные с бизнесом, маркетингом, финансами и юриспруденцией. Будьте профессиональны и лаконичны."
 }
+
+PERSONALITY_PROMPTS = {
+    "default": DEFAULT_PROMPT,
+    "marketing": {
+        "role": "system",
+        "content": "Вы — PNIbot, эксперт по маркетингу. Вы помогаете владельцам малого бизнеса с идеями для продвижения, анализом ЦА, SMM, SEO и контент-стратегиями. Отвечайте креативно, но по делу, предлагая конкретные шаги."
+    },
+    "legal": {
+        "role": "system",
+        "content": "Вы — PNIbot, помощник по юридическим вопросам. Вы предоставляете ОБЩУЮ информацию по регистрации бизнеса, налогам, контрактам и интеллектуальной собственности. ВАЖНО: Всегда напоминайте пользователю, что вы не даете юридических консультаций (legal advice) и что для решения конкретной проблемы необходимо обратиться к квалифицированному юристу."
+    },
+    "analyst": {
+        "role": "system",
+        "content": "Вы — PNIbot, бизнес-аналитик. Вы помогаете анализировать бизнес-идеи, оценивать рыночные ниши, составлять фин. модели и SWOT-анализ. Фокусируйтесь на данных, цифрах и структурированных ответах (например, списки, таблицы)."
+    }
+}
+
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Новый промпт для классификации ***
+CLASSIFICATION_PROMPT_TEMPLATE = """
+Проанализируй запрос пользователя.
+Твоя задача - классифицировать запрос и вернуть JSON-объект.
+
+1.  Определи, относится ли запрос к ведению бизнеса (маркетинг, юриспруденция для бизнеса, финансы, управление, бухгалтерия, запуск компании и т.д.).
+    -   Ключ: "is_business" (boolean: true или false).
+2.  Если "is_business" - true, определи наиболее подходящую категорию (личность) для ответа из списка: ["marketing", "legal", "analyst", "default"].
+    -   "marketing": SMM, SEO, реклама, ЦА, контент-планы.
+    -   "legal": Регистрация ООО/ИП, налоги, контракты, лицензии.
+    -   "analyst": Бизнес-планы, SWOT-анализ, фин. модели, анализ рынка, KPI.
+    -   "default": Общие вопросы о бизнесе, управлении, персонале, которые не входят в другие категории.
+    -   Ключ: "personality" (string: "marketing", "legal", "analyst" или "default").
+    -   Если "is_business" - false, установи "personality" в "default".
+
+Верни ТОЛЬКО JSON-объект и ничего больше.
+
+Запрос пользователя: "{query}"
+
+Твой JSON-ответ:
+"""
+# *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
 
 # --- Модели ---
 class MessageRequest(BaseModel):
     message: str
     user_id: str
     chat_id: str
+    personality: str = "auto" # <-- 'auto' теперь одна из опций
 
 class ChatHistoryRequest(BaseModel):
     user_id: str
@@ -123,9 +179,64 @@ async def _update_chat_in_db(chat_id: str, user_id: str, chat_name: str,
 
     await db.commit()
 
-# --- Логика стриминга ---
+# --- Логика фильтрации и стриминга ---
+
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Новая функция классификации ***
+async def _classify_request(query: str) -> Dict[str, Any]:
+    """
+    Использует Cerebras Llama 3.1 для фильтрации И авто-выбора.
+    Возвращает dict: {"is_business": bool, "personality": str}
+    """
+    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(query=query)
+    
+    try:
+        response = cerebras_client.chat.completions.create(
+            model=CEREBRAS_MODEL_ID,
+            messages=[
+                {"role": "system", "content": "Ты — ИИ-классификатор. Твоя задача — проанализировать запрос и вернуть ТОЛЬКО JSON-объект с результатом."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=150,
+            # Cerebras API может поддерживать response_format, но если нет, парсим вручную
+            # response_format={"type": "json_object"} 
+        )
+        
+        content = response.choices[0].message.content.strip() # type: ignore
+        
+        # Llama может иногда оборачивать JSON в ```json ... ```
+        if content.startswith("```json"):
+            content = content.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+            
+        print(f"Cerebras (Classifier) Response: {content}")
+        data = json.loads(content)
+        
+        # Валидация
+        is_business = data.get("is_business", False)
+        personality = data.get("personality", "default")
+        
+        return {
+            "is_business": bool(is_business),
+            "personality": personality if personality in PERSONALITY_PROMPTS else "default"
+        }
+
+    except Exception as e:
+        print(f"Ошибка классификации Cerebras: {e}")
+        # Безопасный режим: если фильтр сломался, считаем, что запрос нерелевантный
+        return {"is_business": False, "personality": "default"}
+# *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
+
+async def _stream_canned_response(message: str) -> AsyncGenerator[str, None]:
+    """
+    Стримит заранее заданный ответ (например, об ошибке или фильтре).
+    """
+    yield message
+    await asyncio.sleep(0) # Дает циклу событий "вздохнуть"
+
 
 async def _stream_gemini_response(
+    system_prompt: Dict[str, str], # <-- Принимает конкретный промпт
     current_messages: List[Dict[str, str]],
     chat_id: str,
     user_id: str,
@@ -139,12 +250,12 @@ async def _stream_gemini_response(
     full_reply_content = []
     
     try:
-        # Запускаем стриминг
-        stream = client.chat.completions.create(
+        # Запускаем стриминг от Gemini
+        stream = gemini_client.chat.completions.create(
             model="gemini-2.5-flash-lite", 
-            messages=[SYSTEM_PROMPT] + current_messages,
+            messages=[system_prompt] + current_messages,
             stream=True
-        )
+        ) # type: ignore
 
         # Отправляем чанки клиенту
         for chunk in stream:
@@ -165,10 +276,6 @@ async def _stream_gemini_response(
         if full_message:
             current_messages.append({"role": "assistant", "content": full_message})
             
-            # Если это был новый чат, а имя было слишком длинным,
-            # (что маловероятно, т.к. мы уже его обрезали),
-            # здесь можно его еще раз установить.
-            
             await _update_chat_in_db(
                 chat_id=chat_id,
                 user_id=user_id,
@@ -184,12 +291,39 @@ async def index():
     return FileResponse("templates/index.html", media_type="text/html")
 
 
-@app.post("/send_message_stream") # <-- Новый эндпоинт для стрима
+@app.post("/send_message_stream") # <-- Обновленный эндпоинт
 async def send_message_stream(req: MessageRequest):
-    """Обрабатывает сообщение, вызывает Gemini API и стримит ответ."""
+    """Обрабатывает сообщение, классифицирует и стримит ответ."""
     if not req.message or not req.user_id or not req.chat_id:
         raise HTTPException(status_code=400, detail="Все поля обязательны.")
 
+    # 1. Классификация запроса (Фильтр + Авто-выбор) через Cerebras
+    classification = await _classify_request(req.message)
+    
+    is_relevant = classification.get("is_business", False)
+    auto_chosen_personality = classification.get("personality", "default")
+
+    # 2. Если фильтр не пройден
+    if not is_relevant:
+        canned_response = "К сожалению, я могу отвечать только на вопросы, связанные с ведением бизнеса, маркетингом, финансами или юриспруденцией."
+        return StreamingResponse(
+            _stream_canned_response(canned_response),
+            media_type="text/event-stream"
+        )
+
+    # 3. Определение финальной "личности" (системного промпта)
+    user_selected_personality = req.personality
+    
+    if user_selected_personality == "auto":
+        # Если "Авто-выбор", используем то, что выбрал Cerebras
+        final_personality_key = auto_chosen_personality
+    else:
+        # Если пользователь выбрал конкретную, используем ее
+        final_personality_key = user_selected_personality
+        
+    system_prompt = PERSONALITY_PROMPTS.get(final_personality_key, DEFAULT_PROMPT)
+
+    # 4. Получение данных чата
     chat_data = await _get_chat_from_db(req.chat_id)
     is_new_chat = chat_data is None
 
@@ -202,10 +336,10 @@ async def send_message_stream(req: MessageRequest):
 
     current_messages.append({"role": "user", "content": req.message})
 
-    # Возвращаем StreamingResponse, который вызывает наш генератор
+    # 5. Возвращаем StreamingResponse, который вызывает генератор Gemini
     return StreamingResponse(
         _stream_gemini_response(
-            current_messages, req.chat_id, req.user_id, chat_name, is_new_chat
+            system_prompt, current_messages, req.chat_id, req.user_id, chat_name, is_new_chat
         ),
         media_type="text/event-stream"
     )

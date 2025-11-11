@@ -1,38 +1,55 @@
 // --- Глобальные переменные ---
-let currentChatId = null;
-let chats = []; 
-let userId = localStorage.getItem('chat_user_id');
+let currentChatId = null; // ID текущего чата
+let chats = []; // Массив всех чатов
+let userId = localStorage.getItem('chat_user_id'); // ID пользователя из локального хранилища
+let isSidebarCollapsed = false;
 
-// --- Новые переменные для управления стримингом ---
-let isStreaming = false; // Флаг для отслеживания активного стриминга
-let activeFetchController = null; // Контроллер для отмены запроса
 
+
+// --- Переменные для управления стримингом ---
+let isStreaming = false; // Флаг, показывающий, идёт ли сейчас стриминг ответа
+let activeFetchController = null; // Контроллер для отмены запроса, если нужно
+
+// --- Генерация уникального ID пользователя ---
 if (!userId || userId === "") {
+    // Если ID не задан, создаём его случайным образом
     if (typeof window.crypto.randomUUID === 'function') {
-        userId = window.crypto.randomUUID();
+        userId = window.crypto.randomUUID(); // Современный способ
     } else {
-        userId = 'temp-user-' + Date.now();
+        userId = 'temp-user-' + Date.now(); // Резервный способ
     }
-    localStorage.setItem('chat_user_id', userId);
+    localStorage.setItem('chat_user_id', userId); // Сохраняем в локальное хранилище
 }
-console.log("User ID:", userId);
+console.log("User ID:", userId); // Выводим ID в консоль для проверки
 
 // --- Инициализация приложения ---
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Загружаем список чатов с сервера
-    await loadChats(); 
+    await loadChats();
     
-    // 2. Выбираем самый новый (первый в списке) или создаем новый
+    // *** ИЗМЕНЕНИЕ НАЧАЛО: 'auto' - новое значение по умолчанию ***
+    // 1.5. Устанавливаем сохраненную личность
+    const savedPersonality = localStorage.getItem('selected_personality') || 'auto';
+    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
+    
+    const personalitySelector = document.getElementById('personality-selector');
+    if (personalitySelector) {
+        personalitySelector.value = savedPersonality;
+    }
+
+
+    // 2. Выбираем самый новый чат или создаём новый
     if (chats.length > 0) {
-        await setCurrentChat(chats[0].id);
+        await setCurrentChat(chats[0].id); // Устанавливаем первый чат
     } else {
-        createNewChat(); 
+        createNewChat(); // Если чатов нет — создаём новый
     }
 });
 
 // --- Загрузка списка чатов с сервера ---
 async function loadChats() {
     try {
+        // Отправляем POST-запрос на сервер для получения списка чатов
         const response = await fetch('/get_chats', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -43,113 +60,142 @@ async function loadChats() {
             throw new Error('Не удалось загрузить чаты');
         }
 
-        const data = await response.json();
-        chats = data.chats; 
-        renderChatsList();
+        const data = await response.json(); // Получаем данные в формате JSON
+        chats = data.chats; // Сохраняем полученные чаты в глобальную переменную
+        renderChatsList(); // Перерисовываем список чатов
 
     } catch (e) {
-        console.error("Ошибка загрузки чатов:", e);
-        chats = [];
+        console.error("Ошибка загрузки чатов:", e); // Выводим ошибку в консоль
+        chats = []; // Если ошибка — очищаем список чатов
     }
 }
 
 
-// --- Функция для создания НОВОГО (локального) чата ---
+
+// --- Функция переключения состояния сайдбара ---
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const appContainer = document.getElementById('app-container');
+    const toggleBtn = document.getElementById('toggle-sidebar-btn');
+
+    if (isSidebarCollapsed) {
+        // Развернуть
+        sidebar.classList.remove('collapsed');
+        appContainer.classList.remove('sidebar-collapsed');
+        toggleBtn.textContent = '→';
+    } else {
+        // Свернуть
+        sidebar.classList.add('collapsed');
+        appContainer.classList.add('sidebar-collapsed');
+        toggleBtn.textContent = '←';
+    }
+
+    isSidebarCollapsed = !isSidebarCollapsed;
+    localStorage.setItem('sidebarCollapsed', isSidebarCollapsed);
+}
+
+
+
+
+// --- Создание нового чата ---
 function createNewChat() {
+    // Генерируем уникальный ID для нового чата
     const chatId = crypto.randomUUID ? crypto.randomUUID() : 'chat-' + Date.now();
+
+    // Создаём объект нового чата
     const newChat = {
         id: chatId,
         name: "Новый чат",
-        messages: [], // Важно: маркер нового/локального чата
+        messages: [], // Пустой массив — значит, это локальный чат
     };
 
-    // Добавляем в начало списка (unshift)
+    // Добавляем новый чат в начало списка (чтобы он был первым)
     chats.unshift(newChat);
+
+    // Перерисовываем список чатов
     renderChatsList();
-    setCurrentChat(chatId); 
+
+    // Устанавливаем этот чат как текущий
+    setCurrentChat(chatId);
 }
 
-// --- Установка текущего чата (ЗАГРУЗКА ИСТОРИИ) ---
+// --- Установка текущего чата (загрузка истории) ---
 async function setCurrentChat(chatId) {
     if (!chatId) {
         console.error("Попытка установить пустой chatId");
         if (chats.length === 0) {
-            createNewChat();
+            createNewChat(); // Если нет чатов — создаём новый
         } else {
             currentChatId = chats[0].id;
-            await setCurrentChat(currentChatId);
+            await setCurrentChat(currentChatId); // Повторяем попытку
         }
         return;
     }
-    
-    // ДОБАВЛЕНО: Блокировка переключения, если идет стриминг
+
+    // Если идёт стриминг — не даём переключаться
     if (isStreaming) {
         console.log("🚫 Невозможно переключить чат во время стриминга.");
-        return; 
+        return;
     }
 
-    // --- ДОБАВЛЕННАЯ ЛОГИКА: Удаление пустого локального чата перед переключением ---
+    // --- Удаление пустого локального чата ---
     const previousChat = chats.find(c => c.id === currentChatId);
     if (previousChat && previousChat.id !== chatId) {
-        // Проверяем: 
-        // 1. Существует ли предыдущий чат?
-        // 2. Является ли он локальным (есть ли массив messages)?
-        // 3. Пуст ли этот массив messages?
+        // Проверяем, является ли предыдущий чат локальным и пустым
         if (previousChat.messages && previousChat.messages.length === 0) {
             console.log(`🗑️ Удаление пустого локального чата: ${previousChat.name} (ID: ${previousChat.id})`);
-            
-            // Удаляем из локального кэша
+
+            // Удаляем его из массива чатов
             chats = chats.filter(c => c.id !== currentChatId);
-            
-            // Перерисовываем список, чтобы он пропал
+
+            // Перерисовываем список, чтобы он исчез
             renderChatsList();
         }
     }
-    // --- КОНЕЦ ДОБАВЛЕННОЙ ЛОГИКИ ---
-    
-    // Если идет стриминг, отменяем его (это должно быть уже обработано проверкой выше, но оставим на всякий случай, если код где-то вызывает напрямую)
+    // --- Конец удаления ---
+
+    // Если идёт стриминг — отменяем его
     if (isStreaming && activeFetchController) {
-        activeFetchController.abort(); // Отмена текущего запроса
+        activeFetchController.abort(); // Прерываем запрос
         isStreaming = false;
         activeFetchController = null;
         console.log("⚠️ Активный стриминг отменен из-за смены чата.");
     }
-    
+
     currentChatId = chatId;
     const chat = chats.find(c => c.id === chatId);
     if (!chat) {
-         // После удаления пустого чата, chatId может стать неактуальным, 
-         // поэтому ищем первый актуальный в обновленном списке
-         console.error(`Чат с ID ${chatId} не найден в локальном кэше. Перезагрузка или переключение.`);
-         if (chats.length === 0) {
-            createNewChat(); // Если вообще ничего не осталось
+        // Если чат не найден — перезагружаем или выбираем другой
+        console.error(`Чат с ID ${chatId} не найден в локальном кэше. Перезагрузка или переключение.`);
+        if (chats.length === 0) {
+            createNewChat(); // Если всё удалилось — создаём новый
             return;
-         }
-         // Устанавливаем самый новый чат в списке, чтобы избежать ошибки
-         await setCurrentChat(chats[0].id);
-         return;
+        }
+        // Выбираем первый чат в списке
+        await setCurrentChat(chats[0].id);
+        return;
     }
 
-    // Очищаем и перерисовываем чат
+    // Очищаем чат в интерфейсе
     const chatDiv = document.getElementById('chat');
     chatDiv.innerHTML = '';
 
-    // Выделяем активный чат
+    // Выделяем текущий чат в списке
     document.querySelectorAll('.chat-item').forEach(item => {
         item.classList.remove('active');
     });
     const activeItem = document.querySelector(`.chat-item[data-id="${chatId}"]`);
     if (activeItem) activeItem.classList.add('active');
 
-    // Если у чата есть свойство 'messages' (массив) - это локальный
+    // Если чат локальный (есть массив messages), выводим его содержимое
     if (chat.messages) {
         chat.messages.forEach(msg => {
             addMessageToChat(msg.role, msg.content);
         });
-        return; 
+        return;
     }
 
-    // --- Если это существующий чат, грузим его ПОЛНУЮ историю ---
+    // --- Если чат уже существует на сервере — загружаем историю ---
     try {
         const response = await fetch('/get_chat_history', {
             method: 'POST',
@@ -162,8 +208,8 @@ async function setCurrentChat(chatId) {
         }
 
         const chatHistory = await response.json();
-        
-        // Рендерим сообщения из загруженной истории
+
+        // Добавляем каждое сообщение в интерфейс
         chatHistory.messages.forEach(msg => {
             addMessageToChat(msg.role, msg.content);
         });
@@ -174,66 +220,73 @@ async function setCurrentChat(chatId) {
     }
 }
 
-// --- Отправка сообщения (СТРИМИНГ) ---
+// --- Отправка сообщения с использованием стриминга ---
 async function sendMessageStream() {
+    // Если уже идёт стриминг — не отправляем ещё одно
     if (isStreaming) {
         console.log("🚫 Уже идет стриминг. Подождите или отмените.");
-        return; 
+        return;
     }
-    
-    const userInput = document.getElementById('userInput');
-    const message = userInput.value.trim();
-    if (!message) return;
 
-    // Добавляем сообщение пользователя в UI
+    const userInput = document.getElementById('userInput');
+    const message = userInput.value.trim(); // Получаем текст и убираем пробелы
+    if (!message) return; // Если пусто — не отправляем
+    
+    // *** ИЗМЕНЕНИЕ НАЧАЛО: Получаем выбранную личность ***
+    const personalitySelector = document.getElementById('personality-selector');
+    const personality = personalitySelector ? personalitySelector.value : 'auto';
+    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
+    // Добавляем сообщение пользователя в интерфейс
     addMessageToChat('user', message);
     userInput.value = '';
-    autoResize();
+    autoResize(); // Подгоняем размер поля ввода
 
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
 
-    // Если это локальный новый чат, сохраняем сообщение в
-    // локальный массив, чтобы оно не пропало при ошибке
+    // Если это новый локальный чат — сохраняем сообщение локально
     if (currentChat.messages) {
-         currentChat.messages.push({
+        currentChat.messages.push({
             role: 'user',
             content: message,
             timestamp: new Date().toISOString()
         });
     }
-    
-    // --- Инициализация стриминга ---
+
+    // --- Начинаем стриминг ---
     isStreaming = true;
-    activeFetchController = new AbortController();
+    activeFetchController = new AbortController(); // Создаём контроллер для отмены
     const signal = activeFetchController.signal;
-    
-    // ДОБАВЛЕНО: Блокировка действий в сайдбаре
+
+    // Блокируем действия в сайдбаре
     disableSidebarActions(true);
-    
-    // Создаем ПУСТОЙ элемент для ответа AI
+
+    // Создаём пустое место для ответа ИИ
     const chatDiv = document.getElementById('chat');
     const aiMessageDiv = document.createElement('div');
     aiMessageDiv.className = 'ai-message';
-    
-    // Создаем элемент <p> для рендеринга Markdown
+
+    // Создаём элемент для рендеринга Markdown
     const aiMessageContent = document.createElement('p');
-    aiMessageDiv.innerHTML = '<strong>PNI:</strong> '; 
-    aiMessageDiv.appendChild(aiMessageContent); 
+    aiMessageDiv.innerHTML = '<strong>PNI:</strong> ';
+    aiMessageDiv.appendChild(aiMessageContent);
     chatDiv.appendChild(aiMessageDiv);
-    
+
     let fullReply = "";
-    
+
     try {
-        const response = await fetch('/send_message_stream', { 
+        // Отправляем запрос на сервер с сообщением
+        const response = await fetch('/send_message_stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message,
                 user_id: userId,
-                chat_id: currentChatId
+                chat_id: currentChatId,
+                personality: personality // *** ДОБАВЛЕНО ***
             }),
-            signal: signal // Передаем сигнал для отмены
+            signal: signal // Передаём сигнал для отмены
         });
 
         if (!response.ok) {
@@ -241,35 +294,34 @@ async function sendMessageStream() {
             throw new Error(`Ошибка API (${response.status}): ${errText}`);
         }
 
-        // --- Читаем поток ---
+        // Читаем ответ по частям (стриминг)
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            
+
             const chunk = decoder.decode(value);
             fullReply += chunk;
-            
+
             // Рендерим Markdown на лету
             aiMessageContent.innerHTML = marked.parse(fullReply);
-            
-            // Прокручиваем вниз
+
+            // Прокручиваем окно вниз
             chatDiv.scrollTop = chatDiv.scrollHeight;
         }
 
-        // Если это был новый чат, его свойство .messages нам больше не нужно
-        // Мы удаляем его, чтобы он загружался с сервера как "сохраненный"
+        // Если чат был локальным — удаляем его массив messages, чтобы он загружался с сервера
         if (currentChat.messages) {
             delete currentChat.messages;
         }
 
     } catch (error) {
-        // Проверяем, была ли ошибка вызвана отменой (переключением чата)
+        // Проверяем, была ли ошибка отмены
         if (error.name === 'AbortError') {
             console.log("Стриминг успешно отменен.");
-            // Удаляем неполный элемент AI из DOM
+            // Удаляем неполный ответ из интерфейса
             if (aiMessageDiv.parentNode === chatDiv) {
                 chatDiv.removeChild(aiMessageDiv);
             }
@@ -277,31 +329,30 @@ async function sendMessageStream() {
             console.error('Ошибка стриминга:', error);
             aiMessageContent.innerHTML = `<strong>Ошибка:</strong> ${error.message}`;
         }
-    
+
     } finally {
-        // --- Финализация стриминга ---
+        // --- Завершение стриминга ---
         isStreaming = false;
         activeFetchController = null;
-        
-        // ДОБАВЛЕНО: Разблокировка действий в сайдбаре
+
+        // Разблокируем действия в сайдбаре
         disableSidebarActions(false);
 
-        // Перезагружаем список чатов, чтобы обновить имя и позицию
+        // Обновляем список чатов
         await loadChats();
-        
-        // Повторно выделяем активный чат, т.к. renderChatsList() сбросил выделение
+
+        // Повторно выделяем активный чат
         const activeItem = document.querySelector(`.chat-item[data-id="${currentChatId}"]`);
         if (activeItem) activeItem.classList.add('active');
     }
 }
-
 
 // --- Рендер списка чатов ---
 function renderChatsList() {
     const list = document.getElementById('chats-list');
     list.innerHTML = '';
 
-    // Если чаты заблокированы, не даем им быть кликабельными
+    // Блокируем действия, если идёт стриминг
     if (isStreaming) {
         list.classList.add('disabled-actions');
     } else {
@@ -309,7 +360,7 @@ function renderChatsList() {
     }
 
     const search = document.getElementById('search-chats').value.toLowerCase();
-    const filteredChats = chats.filter(chat => 
+    const filteredChats = chats.filter(chat =>
         chat.name.toLowerCase().includes(search)
     );
 
@@ -319,6 +370,7 @@ function renderChatsList() {
         item.dataset.id = chat.id;
         if (chat.id === currentChatId) item.classList.add('active');
 
+        // Получаем последнее сообщение для отображения в списке
         let lastText;
         if (chat.preview) {
             lastText = chat.preview.length > 30 ? chat.preview.substring(0, 30) + '...' : chat.preview;
@@ -329,6 +381,7 @@ function renderChatsList() {
             lastText = 'Пустой чат';
         }
 
+        // Формируем HTML для чата
         item.innerHTML = `
             <span class="avatar">💬</span>
             <div class="chat-info">
@@ -338,7 +391,7 @@ function renderChatsList() {
             <span class="delete-chat-btn" title="Удалить чат">🗑️</span>
         `;
 
-        // Клик по чату
+        // Клик по чату — переключение
         item.addEventListener('click', () => {
             setCurrentChat(chat.id);
         });
@@ -346,7 +399,7 @@ function renderChatsList() {
         // Клик по кнопке удаления
         const deleteBtn = item.querySelector('.delete-chat-btn');
         deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); 
+            e.stopPropagation();
             deleteChat(chat.id, chat.name);
         });
 
@@ -354,14 +407,15 @@ function renderChatsList() {
     });
 }
 
-// --- Функция удаления чата (Решение Проблемы 1) ---
+// --- Удаление чата ---
 async function deleteChat(chatId, chatName) {
-    // ДОБАВЛЕНО: Блокировка удаления, если идет стриминг
+    // Не даём удалять, если идёт стриминг
     if (isStreaming) {
         alert("Нельзя удалить чат во время генерации ответа.");
         return;
     }
-    
+
+    // Подтверждение удаления
     if (!confirm(`Вы уверены, что хотите удалить чат "${chatName}"?`)) {
         return;
     }
@@ -378,26 +432,23 @@ async function deleteChat(chatId, chatName) {
             throw new Error(err.detail || 'Не удалось удалить чат');
         }
 
-        // Удаляем из локального кэша
+        // Удаляем чат из локального массива
         chats = chats.filter(c => c.id !== chatId);
-        
-        // --- Логика после удаления ---
+
+        // Если удаляли текущий чат — переключаемся на другой
         if (currentChatId === chatId) {
-            // 1. Очищаем окно чата
+            // Очищаем интерфейс
             document.getElementById('chat').innerHTML = '';
 
-            // 2. Переключаемся на самый новый (первый) или создаем новый
+            // Если есть другие чаты — переключаемся на первый
             if (chats.length > 0) {
-                // Переключение на новый активный чат
                 await setCurrentChat(chats[0].id);
             } else {
-                // Если чатов не осталось, создаем новый
+                // Если чатов нет — создаём new
                 createNewChat();
             }
-            
-            // 3. Вызов setCurrentChat уже выполнил renderChatsList()
         }
-        renderChatsList();
+        renderChatsList(); // Перерисовываем список
 
     } catch (error) {
         console.error("Ошибка удаления чата:", error);
@@ -405,19 +456,17 @@ async function deleteChat(chatId, chatName) {
     }
 }
 
-
 // --- Поиск чатов ---
 function filterChats() {
-    renderChatsList();
+    renderChatsList(); // Перерисовываем список с учётом поиска
 }
 
-
-// --- Авто-рост textarea ---
+// --- Авто-растягивание поля ввода ---
 function autoResize() {
     const userInput = document.getElementById('userInput');
-    userInput.style.height = 'auto';
+    userInput.style.height = 'auto'; // Сбрасываем высоту
     const maxHeight = 300;
-    userInput.style.height = Math.min(userInput.scrollHeight, maxHeight) + 'px';
+    userInput.style.height = Math.min(userInput.scrollHeight, maxHeight) + 'px'; // Подгоняем под содержимое
 }
 
 // --- Добавление сообщения в чат ---
@@ -427,47 +476,55 @@ function addMessageToChat(role, content) {
     messageDiv.className = role === 'user' ? 'user-message' : 'ai-message';
 
     if (role === 'user') {
+        // Для сообщений пользователя — просто текст
         const textNode = document.createTextNode(content);
         const p = document.createElement('p');
         p.appendChild(textNode);
-        p.innerHTML = p.innerHTML.replace(/\n/g, '<br>');
-        
+        p.innerHTML = p.innerHTML.replace(/\n/g, '<br>'); // Перенос строк
+
         const strong = document.createElement('strong');
         strong.textContent = "Вы: ";
-        
+
         messageDiv.appendChild(strong);
         messageDiv.appendChild(p);
 
     } else {
+        // Для ответов ИИ — используем Markdown
         const htmlContent = marked.parse(content);
         messageDiv.innerHTML = `<strong>PNI:</strong> ${htmlContent}`;
     }
 
     chatDiv.appendChild(messageDiv);
-    chatDiv.scrollTop = chatDiv.scrollHeight;
+    chatDiv.scrollTop = chatDiv.scrollHeight; // Прокручиваем вниз
 }
 
-// --- Функция блокировки/разблокировки действий в сайдбаре (НОВАЯ ФУНКЦИЯ) ---
+// --- Блокировка/разблокировка действий в сайдбаре ---
 function disableSidebarActions(disable) {
     const list = document.getElementById('chats-list');
     const newChatBtn = document.getElementById('new-chat-btn');
     const newChatBtnElement = document.getElementById('new-chat-btn');
     
+    // *** ИЗМЕНЕНИЕ НАЧАЛО: Блокировка селектора ***
+    const personalitySelector = document.getElementById('personality-selector');
+    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
+
     if (disable) {
         list.classList.add('disabled-actions');
         newChatBtn.disabled = true;
-        // Блокируем создание нового чата, если он не вызван из createNewChat()
+        if (personalitySelector) personalitySelector.disabled = true; // *** ДОБАВЛЕНО ***
+        // Блокируем кнопку создания нового чата
         newChatBtnElement.onclick = () => { console.log("🚫 Действие заблокировано во время стриминга."); };
     } else {
         list.classList.remove('disabled-actions');
         newChatBtn.disabled = false;
-        // Восстанавливаем оригинальный обработчик
+        if (personalitySelector) personalitySelector.disabled = false; // *** ДОБАВЛЕНО ***
+        // Восстанавливаем оригинальную функцию кнопки
         newChatBtnElement.onclick = createNewChat;
     }
 }
 
-
-// --- Переключение модели (WIP) ---
+// --- Переключение модели (на будущее) ---
 function switchModel(modelName) {
     console.log("Выбрана модель:", modelName);
     localStorage.setItem('selected_model', modelName);
@@ -475,10 +532,34 @@ function switchModel(modelName) {
 
 // --- Обработчики событий ---
 const userInput = document.getElementById('userInput');
-userInput.addEventListener('input', autoResize);
+userInput.addEventListener('input', autoResize); // Авто-растягивание при вводе
 userInput.addEventListener('keypress', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendMessageStream();
+        sendMessageStream(); // Отправка по Enter
     }
 });
+
+// *** ИЗМЕНЕНИЕ НАЧАЛО: Сохранение личности при изменении ***
+const personalitySelector = document.getElementById('personality-selector');
+if (personalitySelector) {
+    personalitySelector.addEventListener('change', (e) => {
+        localStorage.setItem('selected_personality', e.target.value);
+    });
+}
+// *** ИЗМЕНЕНИЕ КОНЕЦ ***
+
+
+// --- Инициализация состояния сайдбара из localStorage ---
+document.addEventListener('DOMContentLoaded', () => {
+    const savedState = localStorage.getItem('sidebarCollapsed');
+    if (savedState === 'true') {
+        isSidebarCollapsed = true;
+        document.getElementById('sidebar').classList.add('collapsed');
+        document.getElementById('app-container').classList.add('sidebar-collapsed');
+        document.getElementById('toggle-sidebar-btn').textContent = '←';
+    }
+});
+
+// --- Обработчик клика по кнопке сворачивания ---
+document.getElementById('toggle-sidebar-btn').addEventListener('click', toggleSidebar);
