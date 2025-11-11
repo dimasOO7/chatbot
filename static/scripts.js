@@ -27,17 +27,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 1. Загружаем список чатов с сервера
     await loadChats();
     
-    // *** ИЗМЕНЕНИЕ НАЧАЛО: 'auto' - новое значение по умолчанию ***
-    // 1.5. Устанавливаем сохраненную личность
-    const savedPersonality = localStorage.getItem('selected_personality') || 'auto';
-    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
+    // *** ИЗМЕНЕНИЕ: Логика 'personality' удалена ***
     
-    const personalitySelector = document.getElementById('personality-selector');
-    if (personalitySelector) {
-        personalitySelector.value = savedPersonality;
-    }
-
-
     // 2. Выбираем самый новый чат или создаём новый
     if (chats.length > 0) {
         await setCurrentChat(chats[0].id); // Устанавливаем первый чат
@@ -232,10 +223,7 @@ async function sendMessageStream() {
     const message = userInput.value.trim(); // Получаем текст и убираем пробелы
     if (!message) return; // Если пусто — не отправляем
     
-    // *** ИЗМЕНЕНИЕ НАЧАЛО: Получаем выбранную личность ***
-    const personalitySelector = document.getElementById('personality-selector');
-    const personality = personalitySelector ? personalitySelector.value : 'auto';
-    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
+    // *** ИЗМЕНЕНИЕ: Логика 'personality' удалена ***
 
     // Добавляем сообщение пользователя в интерфейс
     addMessageToChat('user', message);
@@ -280,11 +268,11 @@ async function sendMessageStream() {
         const response = await fetch('/send_message_stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            // *** ИЗМЕНЕНИЕ: 'personality' удалено из запроса ***
             body: JSON.stringify({
                 message,
                 user_id: userId,
-                chat_id: currentChatId,
-                personality: personality // *** ДОБАВЛЕНО ***
+                chat_id: currentChatId
             }),
             signal: signal // Передаём сигнал для отмены
         });
@@ -504,21 +492,16 @@ function disableSidebarActions(disable) {
     const newChatBtn = document.getElementById('new-chat-btn');
     const newChatBtnElement = document.getElementById('new-chat-btn');
     
-    // *** ИЗМЕНЕНИЕ НАЧАЛО: Блокировка селектора ***
-    const personalitySelector = document.getElementById('personality-selector');
-    // *** ИЗМЕНЕНИЕ КОНЕЦ ***
-
+    // *** ИЗМЕНЕНИЕ: 'personalitySelector' удален ***
 
     if (disable) {
         list.classList.add('disabled-actions');
         newChatBtn.disabled = true;
-        if (personalitySelector) personalitySelector.disabled = true; // *** ДОБАВЛЕНО ***
         // Блокируем кнопку создания нового чата
         newChatBtnElement.onclick = () => { console.log("🚫 Действие заблокировано во время стриминга."); };
     } else {
         list.classList.remove('disabled-actions');
         newChatBtn.disabled = false;
-        if (personalitySelector) personalitySelector.disabled = false; // *** ДОБАВЛЕНО ***
         // Восстанавливаем оригинальную функцию кнопки
         newChatBtnElement.onclick = createNewChat;
     }
@@ -540,14 +523,7 @@ userInput.addEventListener('keypress', function (e) {
     }
 });
 
-// *** ИЗМЕНЕНИЕ НАЧАЛО: Сохранение личности при изменении ***
-const personalitySelector = document.getElementById('personality-selector');
-if (personalitySelector) {
-    personalitySelector.addEventListener('change', (e) => {
-        localStorage.setItem('selected_personality', e.target.value);
-    });
-}
-// *** ИЗМЕНЕНИЕ КОНЕЦ ***
+// *** ИЗМЕНЕНИЕ: Обработчик 'personalitySelector' удален ***
 
 
 // --- Инициализация состояния сайдбара из localStorage ---

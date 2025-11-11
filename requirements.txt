@@ -6,3 +6,5 @@ uvicorn
 aiosqlite
 pypdf
 python-multipart
+duckduckgo_search
+AsyncDDGS

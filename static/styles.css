@@ -291,49 +291,7 @@ body {
     overflow: hidden;
 }
 
-/* Верхняя панель чата */
-#chat-header {
-    display: flex;
-    justify-content: flex-start; /* Изменено для выравнивания по левому краю */
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-/* --- *** НОВЫЕ СТИЛИ ДЛЯ СЕЛЕКТОРА *** --- */
-.personality-selector-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: #2d2d3f;
-    padding: 8px 15px;
-    border-radius: 20px;
-}
-
-    .personality-selector-wrapper label {
-        font-size: 14px;
-        font-weight: bold;
-        color: #aaa;
-    }
-
-#personality-selector {
-    background-color: #2d2d3f;
-    color: white;
-    border: none;
-    outline: none;
-    font-size: 14px;
-    font-weight: bold;
-    cursor: pointer;
-    -webkit-appearance: none; /* убираем стандартный вид в chrome/safari */
-    -moz-appearance: none; /* убираем стандартный вид в firefox */
-    appearance: none; /* убираем стандартный вид */
-}
-
-    #personality-selector:disabled {
-        opacity: 0.7;
-        cursor: not-allowed;
-    }
-
-/* --- *** КОНЕЦ НОВЫХ СТИЛЕЙ *** --- */
+/* *** ИЗМЕНЕНИЕ: Стили для #chat-header и #personality-selector удалены *** */
 
 
 /* Область с сообщениями */
@@ -348,6 +306,8 @@ body {
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     overflow-y: auto;
     min-height: 0;
+    /* *** ИЗМЕНЕНИЕ: Добавлено, чтобы занять место удаленного хедера *** */
+    margin-top: 20px;
 }
 
 /* Сообщения пользователя (справа) */

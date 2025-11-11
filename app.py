@@ -7,56 +7,62 @@ import os
 import uvicorn
 from typing import Dict, List, Any, AsyncGenerator
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import StreamingResponse  # <-- Импорт для стриминга
+from starlette.responses import StreamingResponse
 import aiosqlite
 import json
 import datetime
-import asyncio # <-- Импортирован для canned response
+import asyncio
+# *** ИЗМЕНЕНИЕ: Добавлен импорт для поиска ***
+from asyncddgs import aDDGS
 
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("Переменная окружения GEMINI_API_KEY не установлена.")
 
-# *** ИЗМЕНЕНИЕ НАЧАЛО: Добавлен клиент Cerebras ***
+# *** ИЗМЕНЕНИЕ: Используем только Cerebras ***
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
 if not CEREBRAS_API_KEY:
     raise ValueError("Переменная окружения CEREBRAS_API_KEY не установлена.")
 
-# Клиент для Gemini (генерация ответов)
-gemini_client = OpenAI(
-    api_key=GEMINI_API_KEY,
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-)
-
-# Клиент для Cerebras (фильтрация и авто-выбор)
-cerebras_client = OpenAI(
+# Клиент для Cerebras (фильтрация, принятие решений И генерация)
+client = OpenAI(
     api_key=CEREBRAS_API_KEY,
     base_url="https://api.cerebras.ai/v1"
 )
-CEREBRAS_MODEL_ID = "llama-3.3-70b"
+
+# *** ИЗМЕНЕНИЕ: Разные модели для разных задач ***
+CLASSIFY_MODEL_ID = "llama-3.3-70b"  # Для классификации и решений (Llama)
+GENERATE_MODEL_ID = "gpt-oss-120b"   # Для генерации ответов
 # *** ИЗМЕНЕНИЕ КОНЕЦ ***
 
+# закоментить то что выше и раскоментить это для использования джемени
+
+#GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+#if not GEMINI_API_KEY:
+#    raise ValueError("Переменная окружения GEMINI_API_KEY не установлена.")
+
+#client = OpenAI(
+#    api_key=GEMINI_API_KEY,
+#    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+#)
+
+#CLASSIFY_MODEL_ID = "gemini-2.5-flash-дшеу"  # Для классификации и решений (Llama)
+#GENERATE_MODEL_ID = "gemini-2.5-flash"   # Для генерации ответов
 
 # --- Инициализация приложения ---
 app = FastAPI(
-    title="API чата Gemini (Async SQLite + Pool)",
-    description="Асинхронный чат с историей сообщений и оптимизированным подключением к SQLite.",
+    title="API чата Cerebras (Async SQLite + Поиск)",
+    description="Асинхронный чат с историей, авто-классификацией и поиском DuckDuckGo.",
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Настройка базы данных ---
 DB_NAME = "database.db"
 
-# Храним глобальное соединение в app.state
 @app.on_event("startup")
 async def startup_event():
     app.state.db = await aiosqlite.connect(DB_NAME)
     app.state.db.row_factory = aiosqlite.Row
-
-    # Инициализация таблицы
     await app.state.db.execute('''
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,33 +78,46 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Закрытие соединения при остановке сервера."""
     await app.state.db.close()
     print("🧹 Соединение с базой закрыто.")
 
+
 # --- Системные промпты (Личности) ---
+
+# *** ИЗМЕНЕНИЕ: Обновлены инструкции по использованию поиска (добавлены источники) ***
+SEARCH_INSTRUCTION = (
+    "\n\n**Важное правило:** Если в начале твоего контекста предоставлены 'Результаты Поиска', "
+    "твой ответ должен быть основан **исключительно** на них. "
+    "После ответа, **обязательно** приведи список использованных источников в формате (используя Markdown): \n"
+    "**Источники:**\n"
+    "- [Источник 1](URL)\n"
+    "- [Источник 2](URL)\n"
+    "Не ссылайся на 'Результаты Поиска' в самом тексте ответа (не пиши 'согласно поиску...'). "
+    "Если результатов поиска нет, отвечай, используя свои знания."
+)
+
 DEFAULT_PROMPT = {
     "role": "system",
-    "content": "Вы — PNIbot, помощник по ведению малого бизнеса. Ваша задача — отвечать на вопросы, связанные с бизнесом, маркетингом, финансами и юриспруденцией. Будьте профессиональны и лаконичны."
+    "content": "Вы — PNIbot, помощник по ведению малого бизнеса. Ваша задача — отвечать на вопросы, связанные с бизнесом, маркетингом, финансами и юриспруденцией. Будьте профессиональны и лаконичны." + SEARCH_INSTRUCTION
 }
 
 PERSONALITY_PROMPTS = {
     "default": DEFAULT_PROMPT,
     "marketing": {
         "role": "system",
-        "content": "Вы — PNIbot, эксперт по маркетингу. Вы помогаете владельцам малого бизнеса с идеями для продвижения, анализом ЦА, SMM, SEO и контент-стратегиями. Отвечайте креативно, но по делу, предлагая конкретные шаги."
+        "content": "Вы — PNIbot, эксперт по маркетингу. Вы помогаете владельцам малого бизнеса с идеями для продвижения, анализом ЦА, SMM, SEO и контент-стратегиями. Отвечайте креативно, но по делу, предлагая конкретные шаги." + SEARCH_INSTRUCTION
     },
     "legal": {
         "role": "system",
-        "content": "Вы — PNIbot, помощник по юридическим вопросам. Вы предоставляете ОБЩУЮ информацию по регистрации бизнеса, налогам, контрактам и интеллектуальной собственности. ВАЖНО: Всегда напоминайте пользователю, что вы не даете юридических консультаций (legal advice) и что для решения конкретной проблемы необходимо обратиться к квалифицированному юристу."
+        "content": "Вы — PNIbot, помощник по юридическим вопросам. Вы предоставляете ОБЩУЮ информацию по регистрации бизнеса, налогам, контрактам и интеллектуальной собственности. ВАЖНО: Всегда напоминайте пользователю, что вы не даете юридических консультаций (legal advice) и что для решения конкретной проблемы необходимо обратиться к квалифицированному юристу." + SEARCH_INSTRUCTION
     },
     "analyst": {
         "role": "system",
-        "content": "Вы — PNIbot, бизнес-аналитик. Вы помогаете анализировать бизнес-идеи, оценивать рыночные ниши, составлять фин. модели и SWOT-анализ. Фокусируйтесь на данных, цифрах и структурированных ответах (например, списки, таблицы)."
+        "content": "Вы — PNIbot, бизнес-аналитик. Вы помогаете анализировать бизнес-идеи, оценивать рыночные ниши, составлять фин. модели и SWOT-анализ. Фокусируйтесь на данных, цифрах и структурированных ответах (например, списки, таблицы)." + SEARCH_INSTRUCTION
     }
 }
 
-# *** ИЗМЕНЕНИЕ НАЧАЛО: Новый промпт для классификации ***
+# Промпт для классификации (остается без изменений)
 CLASSIFICATION_PROMPT_TEMPLATE = """
 Проанализируй запрос пользователя.
 Твоя задача - классифицировать запрос и вернуть JSON-объект.
@@ -119,15 +138,45 @@ CLASSIFICATION_PROMPT_TEMPLATE = """
 
 Твой JSON-ответ:
 """
+
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Новый промпт для принятия решения о поиске ***
+SEARCH_DECISION_PROMPT_TEMPLATE = """
+Ты — ИИ-ассистент, принимающий решения (Llama).
+Твоя задача — проанализировать последний запрос пользователя и краткую историю чата, чтобы решить, нужен ли поиск в интернете для ответа.
+
+Критерии для поиска (needs_search: true):
+1.  Запрос о текущих событиях (новости, погода, курсы валют СЕГОДНЯ).
+2.  Запрос о конкретных, малоизвестных фактах, цифрах, статистике, законах, налогах.
+3.  Пользователь прямо просит "найти", "погуглить", "поискать в интернете".
+4.  Вопрос о компании, продукте или человеке, который не является общеизвестным.
+
+Критерии для отказа от поиска (needs_search: false):
+1.  Общие вопросы, на которые у LLM (gpt-oss120b) есть ответ.
+2.  Вопросы, связанные с бизнесом, маркетингом, правом (на которые PNIbot должен отвечать из своих знаний).
+3.  Продолжение разговора, приветствие, личное мнение.
+4.  Вопрос о содержании предыдущих сообщений в чате.
+
+Твоя задача — сгенерировать ПОИСКОВЫЙ ЗАПРОС (search_query), если поиск нужен. Запрос должен быть кратким и точным. Теккущая дата: {date}
+Если поиск НЕ НУЖЕН, верни null в search_query.
+
+Верни ТОЛЬКО JSON-объект и ничего больше.
+
+История чата (последние 5 сообщений):
+{history}
+
+Запрос пользователя: "{query}"
+
+Твой JSON-ответ:
+"""
 # *** ИЗМЕНЕНИЕ КОНЕЦ ***
 
 
 # --- Модели ---
 class MessageRequest(BaseModel):
+    # *** ИЗМЕНЕНИЕ: Удалено поле 'personality' ***
     message: str
     user_id: str
     chat_id: str
-    personality: str = "auto" # <-- 'auto' теперь одна из опций
 
 class ChatHistoryRequest(BaseModel):
     user_id: str
@@ -138,7 +187,6 @@ class UserIdRequest(BaseModel):
 
 # --- Утилита для доступа к БД ---
 def get_db():
-    """Возвращает текущее подключение к БД (из пула)."""
     return app.state.db
 
 # --- Функции работы с БД ---
@@ -181,37 +229,39 @@ async def _update_chat_in_db(chat_id: str, user_id: str, chat_name: str,
 
 # --- Логика фильтрации и стриминга ---
 
-# *** ИЗМЕНЕНИЕ НАЧАЛО: Новая функция классификации ***
 async def _classify_request(query: str) -> Dict[str, Any]:
     """
-    Использует Cerebras Llama 3.1 для фильтрации И авто-выбора.
-    Возвращает dict: {"is_business": bool, "personality": str}
+    Использует Cerebras Llama для фильтрации И авто-выбора.
     """
     prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(query=query)
     
     try:
-        response = cerebras_client.chat.completions.create(
-            model=CEREBRAS_MODEL_ID,
+        response = client.chat.completions.create(
+            model=CLASSIFY_MODEL_ID, # Используем Llama
             messages=[
                 {"role": "system", "content": "Ты — ИИ-классификатор. Твоя задача — проанализировать запрос и вернуть ТОЛЬКО JSON-объект с результатом."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.0,
-            max_tokens=150,
-            # Cerebras API может поддерживать response_format, но если нет, парсим вручную
-            # response_format={"type": "json_object"} 
+            max_tokens=150
         )
         
         content = response.choices[0].message.content.strip() # type: ignore
         
-        # Llama может иногда оборачивать JSON в ```json ... ```
-        if content.startswith("```json"):
-            content = content.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+        # *** ИЗМЕНЕНИЕ: Более надежная очистка JSON от Markdown-блоков ***
+        if content.startswith("```"):
+            try:
+                # Находим часть после первой строки (``` или ```json)
+                json_part = content.split("\n", 1)[1]
+                # Убираем последнюю строку ```
+                content = json_part.rsplit("\n```", 1)[0]
+            except (IndexError, ValueError):
+                print(f"Ошибка парсинга JSON-блока в _classify_request: {content}")
+                pass
             
         print(f"Cerebras (Classifier) Response: {content}")
         data = json.loads(content)
         
-        # Валидация
         is_business = data.get("is_business", False)
         personality = data.get("personality", "default")
         
@@ -222,8 +272,79 @@ async def _classify_request(query: str) -> Dict[str, Any]:
 
     except Exception as e:
         print(f"Ошибка классификации Cerebras: {e}")
-        # Безопасный режим: если фильтр сломался, считаем, что запрос нерелевантный
         return {"is_business": False, "personality": "default"}
+
+
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Новые функции для поиска ***
+async def _decide_search(user_query: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Использует Cerebras Llama, чтобы решить, нужен ли поиск.
+    """
+    history_str = "\n".join([f"{m['role']}: {m['content'][:100]}..." for m in history])
+    prompt = SEARCH_DECISION_PROMPT_TEMPLATE.format(date=datetime.datetime.now().strftime("%d.%m.%Y"),history=history_str, query=user_query)
+    
+    try:
+        response = client.chat.completions.create(
+            model=CLASSIFY_MODEL_ID, # Используем Llama
+            messages=[
+                {"role": "system", "content": "Ты — ИИ-классификатор, принимающий решение о поиске. Верни ТОЛЬКО JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=200
+        )
+        
+        content = response.choices[0].message.content.strip() # type: ignore
+        
+        # *** ИЗМЕНЕНИЕ: Более надежная очистка JSON от Markdown-блоков ***
+        if content.startswith("```"):
+            try:
+                # Находим часть после первой строки (``` или ```json)
+                json_part = content.split("\n", 1)[1]
+                # Убираем последнюю строку ```
+                content = json_part.rsplit("\n```", 1)[0]
+            except (IndexError, ValueError):
+                print(f"Ошибка парсинга JSON-блока в _decide_search: {content}")
+                pass
+            
+        print(f"Cerebras (Search Decision) Response: {content}")
+        data = json.loads(content)
+        
+        return {
+            "needs_search": bool(data.get("needs_search", False)),
+            "search_query": data.get("search_query")
+        }
+
+    except Exception as e:
+        print(f"Ошибка принятия решения о поиске (Cerebras): {e}")
+        # Безопасный режим: не ищем, если модель сломалась
+        return {"needs_search": False, "search_query": None}
+
+async def _search_duckduckgo(query: str) -> str:
+    """
+    Выполняет асинхронный поиск в DuckDuckGo и форматирует результаты.
+    """
+    print(f"Выполнение поиска: {query}")
+    try:
+        async with aDDGS() as ddgs:
+            # Ищем 3 лучших результата
+            results = await ddgs.text(query, max_results=3)
+            
+            if not results:
+                return "Результаты Поиска: Не найдено."
+            
+            # *** ИЗМЕНЕНИЕ: Форматируем для передачи в LLM, чтобы она могла цитировать ***
+            formatted_results = ["Результаты Поиска (используй их для ответа, в конце ответа приведи источники):"]
+            for i, r in enumerate(results):
+                # Предоставляем URL и текст. Модель сама создаст ссылку по инструкции.
+                formatted_results.append(
+                    f"Источник {i+1}: [URL: {r['href']}] [ТЕКСТ: {r['body']}]"
+                )
+            return "\n".join(formatted_results)
+
+    except Exception as e:
+        print(f"Ошибка поиска DuckDuckGo: {e}")
+        return "Результаты Поиска: Ошибка при выполнении."
 # *** ИЗМЕНЕНИЕ КОНЕЦ ***
 
 
@@ -232,30 +353,42 @@ async def _stream_canned_response(message: str) -> AsyncGenerator[str, None]:
     Стримит заранее заданный ответ (например, об ошибке или фильтре).
     """
     yield message
-    await asyncio.sleep(0) # Дает циклу событий "вздохнуть"
+    await asyncio.sleep(0)
 
 
-async def _stream_gemini_response(
-    system_prompt: Dict[str, str], # <-- Принимает конкретный промпт
+# *** ИЗМЕНЕНИЕ: Функция переименована и переведена на Cerebras ***
+async def _stream_cerebras_response(
+    system_prompt: Dict[str, str],
     current_messages: List[Dict[str, str]],
+    search_context: str | None, # <-- Новое: принимает результаты поиска
     chat_id: str,
     user_id: str,
     chat_name: str,
     is_new_chat: bool
 ) -> AsyncGenerator[str, None]:
     """
-    Генератор, который стримит ответ от Gemini и
+    Генератор, который стримит ответ от Cerebras и
     по завершению сохраняет полную историю в БД.
     """
     full_reply_content = []
     
+    # *** ИЗМЕНЕНИЕ: Формируем финальный список сообщений ***
+    final_messages = [system_prompt]
+    
+    if search_context:
+        # Добавляем результаты поиска как системное сообщение
+        final_messages.append({"role": "system", "content": search_context})
+    
+    # Добавляем историю чата
+    final_messages.extend(current_messages)
+    
     try:
-        # Запускаем стриминг от Gemini
-        stream = gemini_client.chat.completions.create(
-            model="gemini-2.5-flash-lite", 
-            messages=[system_prompt] + current_messages,
+        # Запускаем стриминг от Cerebras
+        stream = client.chat.completions.create(
+            model=GENERATE_MODEL_ID, # Используем gpt-oss120b
+            messages=final_messages, # type: ignore
             stream=True
-        ) # type: ignore
+        )
 
         # Отправляем чанки клиенту
         for chunk in stream:
@@ -265,22 +398,23 @@ async def _stream_gemini_response(
                 yield content
 
     except Exception as e:
-        print(f"Ошибка API Gemini (стрим): {e}")
+        print(f"Ошибка API Cerebras (стрим): {e}")
         yield f"Ошибка API: {str(e)}"
     
     finally:
         # По завершению стрима, сохраняем ПОЛНЫЙ ответ в БД
         full_message = "".join(full_reply_content)
         
-        # Сохраняем, только если был получен ответ
         if full_message:
+            # Добавляем в историю только 'user' и 'assistant'
+            # (system_prompt и search_context не сохраняем в БД)
             current_messages.append({"role": "assistant", "content": full_message})
             
             await _update_chat_in_db(
                 chat_id=chat_id,
                 user_id=user_id,
                 chat_name=chat_name,
-                messages=current_messages,
+                messages=current_messages, # Сохраняем историю без промптов
                 is_new_chat=is_new_chat
             )
 
@@ -291,18 +425,20 @@ async def index():
     return FileResponse("templates/index.html", media_type="text/html")
 
 
-@app.post("/send_message_stream") # <-- Обновленный эндпоинт
-async def send_message_stream(req: MessageRequest):
-    """Обрабатывает сообщение, классифицирует и стримит ответ."""
+@app.post("/send_message_stream")
+async def send_message_stream(req: MessageRequest): # <-- Модель обновлена
+    """
+    Обрабатывает сообщение, классифицирует, решает о поиске,
+    выполняет поиск (если нужно) и стримит ответ.
+    """
     if not req.message or not req.user_id or not req.chat_id:
         raise HTTPException(status_code=400, detail="Все поля обязательны.")
 
-    # 1. Классификация запроса (Фильтр + Авто-выбор) через Cerebras
+    # 1. Классификация запроса (Фильтр + Авто-выбор) через Cerebras Llama
     classification = await _classify_request(req.message)
     
     is_relevant = classification.get("is_business", False)
-    auto_chosen_personality = classification.get("personality", "default")
-
+    
     # 2. Если фильтр не пройден
     if not is_relevant:
         canned_response = "К сожалению, я могу отвечать только на вопросы, связанные с ведением бизнеса, маркетингом, финансами или юриспруденцией."
@@ -311,16 +447,8 @@ async def send_message_stream(req: MessageRequest):
             media_type="text/event-stream"
         )
 
-    # 3. Определение финальной "личности" (системного промпта)
-    user_selected_personality = req.personality
-    
-    if user_selected_personality == "auto":
-        # Если "Авто-выбор", используем то, что выбрал Cerebras
-        final_personality_key = auto_chosen_personality
-    else:
-        # Если пользователь выбрал конкретную, используем ее
-        final_personality_key = user_selected_personality
-        
+    # 3. Определение "личности" (только автоматическое)
+    final_personality_key = classification.get("personality", "default")
     system_prompt = PERSONALITY_PROMPTS.get(final_personality_key, DEFAULT_PROMPT)
 
     # 4. Получение данных чата
@@ -328,18 +456,34 @@ async def send_message_stream(req: MessageRequest):
     is_new_chat = chat_data is None
 
     if is_new_chat:
-        chat_name = req.message[:30] # Имя чата = первые 30 симв.
-        current_messages = []
+        chat_name = req.message[:30]
+        current_messages = [] # История (без системных промптов)
     else:
         chat_name = chat_data["chat_name"]
         current_messages = chat_data["messages"]
 
+    # 5. *** НОВЫЙ ШАГ: Принятие решения о поиске ***
+    # Используем Llama для решения
+    search_decision = await _decide_search(req.message, current_messages[-5:]) # Последние 5 сообщ. для контекста
+    
+    search_context = None
+    if search_decision.get("needs_search") and search_decision.get("search_query"):
+        # 6. *** НОВЫЙ ШАГ: Выполнение поиска ***
+        search_context = await _search_duckduckgo(search_decision.get("search_query"))
+
+    # 7. Добавляем текущее сообщение пользователя в историю для генерации
     current_messages.append({"role": "user", "content": req.message})
 
-    # 5. Возвращаем StreamingResponse, который вызывает генератор Gemini
+    # 8. Возвращаем StreamingResponse, который вызывает генератор Cerebras
     return StreamingResponse(
-        _stream_gemini_response(
-            system_prompt, current_messages, req.chat_id, req.user_id, chat_name, is_new_chat
+        _stream_cerebras_response(
+            system_prompt,
+            current_messages,
+            search_context, # <-- Передаем результаты поиска
+            req.chat_id,
+            req.user_id,
+            chat_name,
+            is_new_chat
         ),
         media_type="text/event-stream"
     )
@@ -347,7 +491,6 @@ async def send_message_stream(req: MessageRequest):
 
 @app.post("/get_chats")
 async def get_chats(req: UserIdRequest):
-    """Возвращает список чатов пользователя."""
     if not req.user_id:
         raise HTTPException(status_code=400, detail="user_id не может быть пустым.")
 
@@ -372,10 +515,9 @@ async def get_chats(req: UserIdRequest):
 
 @app.post("/get_chat_history")
 async def get_chat_history(req: ChatHistoryRequest):
-    """Возвращает историю конкретного чата."""
     chat_data = await _get_chat_from_db(req.chat_id)
     if not chat_data or chat_data["user_id"] != req.user_id:
-        raise HTTPException(status_code=404, detail="Чат не найден или не принадлежит пользователю.")
+        raise HTTPException(status_code=4404, detail="Чат не найден или не принадлежит пользователю.")
     return {
         "chat_id": chat_data["chat_id"],
         "name": chat_data["chat_name"],
@@ -384,13 +526,11 @@ async def get_chat_history(req: ChatHistoryRequest):
 
 @app.post("/delete_chat")
 async def delete_chat(req: ChatHistoryRequest):
-    """Удаляет чат из базы данных."""
     if not req.user_id or not req.chat_id:
         raise HTTPException(status_code=400, detail="user_id и chat_id обязательны.")
 
     db = get_db()
     
-    # Сначала проверяем, что чат принадлежит этому пользователю
     async with db.execute(
         "SELECT user_id FROM chats WHERE chat_id = ?", (req.chat_id,)
     ) as cursor:
@@ -399,7 +539,6 @@ async def delete_chat(req: ChatHistoryRequest):
     if not row or row["user_id"] != req.user_id:
         raise HTTPException(status_code=404, detail="Чат не найден или не принадлежит пользователю.")
     
-    # Удаляем чат
     await db.execute("DELETE FROM chats WHERE chat_id = ?", (req.chat_id,))
     await db.commit()
     
@@ -407,4 +546,6 @@ async def delete_chat(req: ChatHistoryRequest):
 
 # --- Точка входа ---
 if __name__ == "__main__":
+    # Напоминание: для работы поиска нужна библиотека
+    # pip install duckduckgo-search asyncddgs
     uvicorn.run(app, host="0.0.0.0", port=8000)
