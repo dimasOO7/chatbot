@@ -3,6 +3,7 @@ let currentChatId = null; // ID текущего чата
 let chats = []; // Массив всех чатов
 let userId = localStorage.getItem('chat_user_id'); // ID пользователя из локального хранилища
 let isSidebarCollapsed = false;
+let currentFile = null; // *** ИЗМЕНЕНИЕ: Хранит выбранный файл ***
 
 
 
@@ -86,6 +87,36 @@ function toggleSidebar() {
 }
 
 
+// --- *** ИЗМЕНЕНИЕ: Новая функция для отображения имени файла *** ---
+function displayFileName() {
+    const fileInput = document.getElementById('file-upload');
+    const fileNameDisplay = document.getElementById('file-name-display');
+    
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        
+        // Проверка на .txt
+        if (file.name.endsWith('.txt')) {
+            currentFile = file;
+            fileNameDisplay.textContent = `Файл: ${file.name}`;
+        } else {
+            alert("Пожалуйста, выберите только .txt файлы.");
+            fileInput.value = null; // Сбросить выбор
+            currentFile = null;
+            fileNameDisplay.textContent = '';
+        }
+    } else {
+        currentFile = null;
+        fileNameDisplay.textContent = '';
+    }
+}
+
+// --- Сброс прикрепленного файла ---
+function clearFileInput() {
+    document.getElementById('file-upload').value = null;
+    document.getElementById('file-name-display').textContent = '';
+    currentFile = null;
+}
 
 
 // --- Создание нового чата ---
@@ -108,6 +139,9 @@ function createNewChat() {
 
     // Устанавливаем этот чат как текущий
     setCurrentChat(chatId);
+    
+    // *** ИЗМЕНЕНИЕ: Сбрасываем файл при создании нового чата ***
+    clearFileInput();
 }
 
 // --- Установка текущего чата (загрузка истории) ---
@@ -170,6 +204,9 @@ async function setCurrentChat(chatId) {
     // Очищаем чат в интерфейсе
     const chatDiv = document.getElementById('chat');
     chatDiv.innerHTML = '';
+    
+    // *** ИЗМЕНЕНИЕ: Сбрасываем файл при переключении чата ***
+    clearFileInput();
 
     // Выделяем текущий чат в списке
     document.querySelectorAll('.chat-item').forEach(item => {
@@ -221,14 +258,41 @@ async function sendMessageStream() {
 
     const userInput = document.getElementById('userInput');
     const message = userInput.value.trim(); // Получаем текст и убираем пробелы
-    if (!message) return; // Если пусто — не отправляем
     
-    // *** ИЗМЕНЕНИЕ: Логика 'personality' удалена ***
+    // *** ИЗМЕНЕНИЕ: Проверяем и сообщение, и файл ***
+    if (!message && !currentFile) return; // Не отправляем, если пусто
 
+    // *** ИЗМЕНЕНИЕ: Читаем файл и готовим данные ***
+    let fileContent = null;
+    let fileName = null;
+    let displayMessage = message; // Сообщение для отображения в UI
+
+    if (currentFile) {
+        try {
+            fileContent = await currentFile.text();
+            fileName = currentFile.name;
+            
+            // Формируем сообщение для UI
+            if (displayMessage) {
+                displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
+            } else {
+                displayMessage = `(Прикреплен файл: ${fileName})`;
+            }
+        } catch (e) {
+            console.error("Ошибка чтения файла:", e);
+            alert("Не удалось прочитать файл.");
+            clearFileInput();
+            return;
+        }
+    }
+    
     // Добавляем сообщение пользователя в интерфейс
-    addMessageToChat('user', message);
+    addMessageToChat('user', displayMessage);
     userInput.value = '';
     autoResize(); // Подгоняем размер поля ввода
+    
+    // *** ИЗМЕНЕНИЕ: Сбрасываем файл после подготовки ***
+    clearFileInput();
 
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
@@ -237,7 +301,7 @@ async function sendMessageStream() {
     if (currentChat.messages) {
         currentChat.messages.push({
             role: 'user',
-            content: message,
+            content: displayMessage, // Сохраняем сообщение с припиской
             timestamp: new Date().toISOString()
         });
     }
@@ -268,11 +332,13 @@ async function sendMessageStream() {
         const response = await fetch('/send_message_stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // *** ИЗМЕНЕНИЕ: 'personality' удалено из запроса ***
+            // *** ИЗМЕНЕНИЕ: Добавлены file_content и file_name ***
             body: JSON.stringify({
-                message,
+                message: message, // Оригинальное сообщение (без приписки)
                 user_id: userId,
-                chat_id: currentChatId
+                chat_id: currentChatId,
+                file_content: fileContent, // Содержимое файла
+                file_name: fileName         // Имя файла
             }),
             signal: signal // Передаём сигнал для отмены
         });

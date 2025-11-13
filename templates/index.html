@@ -52,9 +52,14 @@
             
             <div id="chat"></div>
 
-            <div id="user-message-and-send">
-                <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
-                <button onclick="sendMessageStream()" id="send-message">→</button>
+            <div class="input-area-container"> <div id="user-message-and-send">
+                    <label for="file-upload" id="file-upload-btn" title="Прикрепить .txt файл">📎</label>
+                    <input type="file" id="file-upload" accept=".txt" onchange="displayFileName()">
+                    
+                    <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
+                    <button onclick="sendMessageStream()" id="send-message">→</button>
+                </div>
+                <div id="file-name-display"></div>
             </div>
         </main>
     </div>

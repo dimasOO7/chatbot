@@ -15,6 +15,16 @@ import asyncio
 from asyncddgs import aDDGS
 import aiohttp
 from bs4 import BeautifulSoup
+import re  # <-- Impor untuk ekspresi reguler
+
+
+# --- Regex для deteksi URL ---
+# Regex umum untuk menemukan URL
+URL_REGEX = re.compile(r'https://[\w\.-]+[/\w\.-]*')
+# Regex для mengekstrak ID Google Doc
+DOC_RE = re.compile(r"/document/d/([\w-]+)")
+# Regex для mengekstrak ID Google Sheet
+SHEET_RE = re.compile(r"/spreadsheets/d/([\w-]+)")
 
 
 # --- Загрузка переменных окружения ---
@@ -54,7 +64,7 @@ GENERATE_MODEL_ID = "gpt-oss-120b"  # Для генерации ответов
 #    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 #)
 
-#CLASSIFY_MODEL_ID = "gemini-2.5-flash-дшеу"  # Для классификации и решений (Llama)
+#CLASSIFY_MODEL_ID = "gemini-2.5-flash-lite"  # Для классификации и решений (Llama)
 #GENERATE_MODEL_ID = "gemini-2.5-flash"   # Для генерации ответов
 
 # --- Инициализация приложения ---
@@ -94,9 +104,10 @@ async def shutdown_event():
 
 # *** ИЗМЕНЕНИЕ: Обновлены инструкции по использованию поиска (добавлены источники) ***
 SEARCH_INSTRUCTION = (
-    "\n\n**Важное правило:** Если в начале твоего контекста предоставлены 'Результаты Поиска', "
+    "\n\n**Важное правило:** Если в начале твоего контекста предоставлены 'Результаты Поиска' или 'Контекст, извлеченный из URL' "
+    "или 'Контекст, извлеченный из прикрепленного файла', " # <-- ИЗМЕНЕНИЕ: Добавлен файл
     "твой ответ должен быть основан **исключительно** на них. "
-    "После ответа, **обязательно** приведи список использованных источников в формате (используя Markdown): \n"
+    "Если есть 'Результаты Поиска', **обязательно** приведи список использованных источников в формате (используя Markdown): \n"
     "**Источники:**\n"
     "1. [Название источника 1](URL)\n"
     "2. [Название источника 2](URL)\n"
@@ -104,7 +115,7 @@ SEARCH_INSTRUCTION = (
     "4. [Название источника 4](URL)\n"
     "5. [Название источника 5](URL)\n"
     "Не ссылайся на 'Результаты Поиска' в самом тексте ответа (не пиши 'согласно поиску...'). "
-    "Если результатов поиска нет, отвечай, используя свои знания."
+    "Если результатов поиска или URL/файла нет, отвечай, используя свои знания."
 )
 
 DEFAULT_PROMPT = {
@@ -151,7 +162,7 @@ ANALYSIS_PLAN_PROMPT_TEMPLATE = """
 3.  **Решение о поиске (needs_search):**
     -   Нужен ли поиск в интернете для ответа?
     -   Искать нужно (true): Запросы о текущих событиях (новости, погода, курсы валют СЕГОДНЯ), конкретных фактах, цифрах, статистике, законах, налогах, малоизвестных компаниях/продуктах.
-    -   Искать НЕ нужно (false): Общие вопросы, на которые у LLM есть ответ (например, "что такое маркетинг"), вопросы о личном мнении, продолжение разговора, вопросы о предыдущих сообщениях в чате.
+    -   Искать НЕ нужно (false): Общие вопросы, на которые у LLM есть ответ (например, "что такое маркетинг"), вопросы о личном мнении, продолжение разговора, вопросы о предыдущих сообщениях в чате, **если в запросе пользователя уже есть ссылки (URL) или прикреплен файл (сообщение содержит '(Прикреплен файл: ...)')**.
     -   Ключ: "needs_search" (boolean).
 
 4.  **Поисковый запрос (search_query):**
@@ -180,9 +191,11 @@ ANALYSIS_PLAN_PROMPT_TEMPLATE = """
 # --- Модели ---
 class MessageRequest(BaseModel):
     # *** ИЗМЕНЕНИЕ: Удалено поле 'personality' (остается удаленным) ***
-    message: str
+    message: str # Оригинальное сообщение из поля ввода
     user_id: str
     chat_id: str
+    file_content: str | None = None # *** ИЗМЕНЕНИЕ: Содержимое файла ***
+    file_name: str | None = None    # *** ИЗМЕНЕНИЕ: Имя файла ***
 
 class ChatHistoryRequest(BaseModel):
     user_id: str
@@ -327,7 +340,60 @@ async def _analyze_and_plan(user_query: str, history: List[Dict[str, str]]) -> D
 # *** ИЗМЕНЕНИЕ КОНЕЦ ***
 
 
-# *** ИЗМЕНЕНИЕ НАЧАЛО: Функции поиска (остаются, но _search_duckduckgo обновлен) ***
+# *** ИЗМЕНЕНИЕ НАЧАЛО: Функции поиска и загрузки URL ***
+
+async def _fetch_google_doc_content(session: aiohttp.ClientSession, url: str) -> str | None:
+    """
+    Пытается загрузить контент из Google Doc или Sheet, используя /export.
+    Возвращает текст (txt/csv) или None, если URL не соответствует.
+    """
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'}
+    
+    doc_match = DOC_RE.search(url)
+    sheet_match = SHEET_RE.search(url)
+    
+    export_url = None
+    
+    if doc_match:
+        doc_id = doc_match.group(1)
+        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+    elif sheet_match:
+        sheet_id = sheet_match.group(1)
+        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+
+    if not export_url:
+        return None # Это не Google Doc/Sheet, который мы можем обработать
+
+    MAX_DOC_LENGTH = 3000 # Ограничение на размер контента из одного документа
+    
+    try:
+        print(f"Загрузка Google Doc/Sheet: {export_url}")
+        async with session.get(export_url, timeout=7, headers=headers) as response:
+            if response.status != 200:
+                return f"[Не удалось загрузить URL: {url} (статус: {response.status})]"
+            
+            # Читаем как байты, чтобы избежать проблем с кодировкой, затем декодируем
+            content_bytes = await response.read()
+            text_content = ""
+            
+            # Пытаемся декодировать
+            try:
+                text_content = content_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    text_content = content_bytes.decode('windows-1251') # Запасной вариант
+                except Exception as e:
+                    return f"[Не удалось декодировать контент из {url}: {e}]"
+            
+            return text_content[:MAX_DOC_LENGTH] + "..." if len(text_content) > MAX_DOC_LENGTH else text_content
+
+    except asyncio.TimeoutError:
+        return f"[Не удалось загрузить URL: {url} (тайм-аут)]"
+    except Exception as e:
+        print(f"Ошибка при загрузке Google Doc {url}: {e}")
+        return f"[Ошибка при загрузке URL {url}: {str(e)}]"
+
+
 async def _fetch_and_parse(session: aiohttp.ClientSession, url: str) -> str:
     """
     Асинхронно загружает URL, парсит HTML и возвращает очищенный текст.
@@ -473,6 +539,10 @@ async def _stream_cerebras_response(
         final_messages.append({"role": "system", "content": search_context})
     
     # Добавляем историю чата
+    # current_messages УЖЕ содержит:
+    # 1. Историю до этого
+    # 2. (Если было) Скрытое сообщение с контентом URL или ФАЙЛА
+    # 3. Текущее видимое сообщение пользователя
     final_messages.extend(current_messages)
     
     try:
@@ -507,7 +577,7 @@ async def _stream_cerebras_response(
                 chat_id=chat_id,
                 user_id=user_id,
                 chat_name=chat_name,
-                messages=current_messages, # Сохраняем историю без промптов
+                messages=current_messages, # Сохраняем историю (включая скрытое сообщение)
                 is_new_chat=is_new_chat
             )
 
@@ -524,27 +594,89 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
     Обрабатывает сообщение, выполняет единый анализ (фильтр + поиск),
     выполняет поиск (если нужно) и стримит ответ.
     """
-    if not req.message or not req.user_id or not req.chat_id:
-        raise HTTPException(status_code=400, detail="Все поля обязательны.")
+    # *** ИЗМЕНЕНИЕ: Проверяем, что есть хотя бы сообщение или файл ***
+    if not req.message and not req.file_content:
+        raise HTTPException(status_code=400, detail="Сообщение или файл должны присутствовать.")
+        
+    if not req.user_id or not req.chat_id:
+        raise HTTPException(status_code=400, detail="user_id и chat_id обязательны.")
 
-    # 1. Получение данных чата (нужно для истории в _analyze_and_plan)
+    # 1. Получение данных чата
     chat_data = await _get_chat_from_db(req.chat_id)
     is_new_chat = chat_data is None
 
     if is_new_chat:
-        chat_name = req.message[:30]
         current_messages = [] # История (без системных промптов)
     else:
         chat_name = chat_data["chat_name"]
         current_messages = chat_data["messages"]
         
-    # 2. *** НОВЫЙ ЕДИНЫЙ ШАГ: Анализ, Фильтрация, Решение о поиске ***
+    # *** ИЗМЕНЕНИЕ: Логика контекста (Приоритет: Файл -> GDoc -> Поиск) ***
+
+    # 2. Обработка прикрепленного файла (Приоритет 1)
+    if req.file_content:
+        print(f"Обнаружен прикрепленный файл: {req.file_name}")
+        # Создаем "скрытое" системное сообщение
+        file_context_message = {
+            "role": "system",
+            "content": f"Контекст, извлеченный из прикрепленного файла '{req.file_name}' (используй эту информацию для ответа):\n{req.file_content}"
+        }
+        current_messages.append(file_context_message)
+
+    # 3. Создание *видимого* сообщения пользователя
+    # (Фронтенд уже показал это пользователю, мы сохраняем это в БД)
+    visible_user_message_content = req.message
+    if req.file_name:
+        if visible_user_message_content:
+            visible_user_message_content += f"\n\n(Прикреплен файл: {req.file_name})"
+        else:
+            visible_user_message_content = f"(Прикреплен файл: {req.file_name})"
+    
+    # 4. Обработка ссылок Google Docs (Приоритет 2)
+    # Выполняется, ТОЛЬКО если не был прикреплен файл
+    urls = URL_REGEX.findall(req.message) # Ищем в *оригинальном* сообщении
+    fetched_link_content = []
+    has_google_links = False
+    link_context_message = None
+
+    if urls and not req.file_content:
+        print(f"Найдено {len(urls)} URL (файл не прикреплен), загрузка...")
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for url in urls:
+                tasks.append(_fetch_google_doc_content(session, url))
+            
+            fetched_contents = await asyncio.gather(*tasks)
+            
+            for i, content in enumerate(fetched_contents):
+                if content: # Если _fetch_google_doc_content вернул что-то (не None)
+                    has_google_links = True
+                    fetched_link_content.append(f"Контент из {urls[i]}:\n{content}")
+        
+        if has_google_links:
+            combined_link_content = "\n\n---\n\n".join(fetched_link_content)
+            # Создаем "скрытое" системное сообщение
+            link_context_message = {
+                "role": "system",
+                "content": f"Контекст, извлеченный из URL-адресов пользователя (используй эту информацию для ответа):\n{combined_link_content}"
+            }
+            current_messages.append(link_context_message)
+            
+    elif urls and req.file_content:
+        print("Обнаружены URL, но прикрепленный файл имеет приоритет. URL не будут загружены.")
+
+    # 5. Установка имени чата
+    if is_new_chat:
+        chat_name = visible_user_message_content[:30]
+
+    # 6. *** ЕДИНЫЙ ШАГ: Анализ, Фильтрация, Решение о поиске ***
     # Используем Llama для принятия всех решений в одном вызове
-    analysis = await _analyze_and_plan(req.message, current_messages[-5:]) # Последние 5 сообщ. для контекста
+    # Анализ идет по *видимому* сообщению
+    analysis = await _analyze_and_plan(visible_user_message_content, current_messages[-5:])
     
     is_relevant = analysis.get("is_business", False)
     
-    # 3. Если фильтр не пройден
+    # 7. Если фильтр не пройден
     if not is_relevant:
         canned_response = "К сожалению, я могу отвечать только на вопросы, связанные с ведением бизнеса, маркетингом, финансами или юриспруденцией."
         return StreamingResponse(
@@ -552,27 +684,37 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
             media_type="text/event-stream"
         )
 
-    # 4. Определение "личности" (автоматически из analysis)
+    # 8. Определение "личности" (автоматически из analysis)
     final_personality_key = analysis.get("personality", "default")
     system_prompt = PERSONALITY_PROMPTS.get(final_personality_key, DEFAULT_PROMPT)
 
-    # 5. Выполнение поиска (если анализ решил, что это нужно)
+    # 9. Выполнение поиска (Приоритет 3)
     search_context = None
-    if analysis.get("needs_search") and analysis.get("search_query") and analysis.get("num_results") > 0:
+    
+    # Ищем, ТОЛЬКО если не было файла И не было ссылок GDocs
+    if (
+        not req.file_content and not has_google_links and
+        analysis.get("needs_search") and 
+        analysis.get("search_query") and 
+        analysis.get("num_results") > 0
+    ):
         search_context = await _search_duckduckgo(
             analysis.get("search_query"),
             analysis.get("num_results")
         )
+    elif analysis.get("needs_search"):
+        print("Поиск отменен, так как предоставлен файл или ссылка Google Doc.")
 
-    # 6. Добавляем текущее сообщение пользователя в историю для генерации
-    current_messages.append({"role": "user", "content": req.message})
 
-    # 7. Возвращаем StreamingResponse, который вызывает генератор Cerebras
+    # 10. Добавляем текущее *видимое* сообщение пользователя в историю для генерации
+    current_messages.append({"role": "user", "content": visible_user_message_content})
+
+    # 11. Возвращаем StreamingResponse, который вызывает генератор Cerebras
     return StreamingResponse(
         _stream_cerebras_response(
             system_prompt,
-            current_messages,
-            search_context,
+            current_messages, # <-- Уже содержит (history + optional file/link_context + user_message)
+            search_context,   # <-- Либо None, либо результаты поиска
             req.chat_id,
             req.user_id,
             chat_name,
@@ -596,7 +738,16 @@ async def get_chats(req: UserIdRequest):
     """, (req.user_id,)) as cursor:
         async for row in cursor:
             messages = json.loads(row["messages"]) if row["messages"] else []
-            last_msg = messages[-1]["content"] if messages else None
+            
+            # Ищем последнее сообщение от 'user' или 'assistant' для превью
+            last_msg_content = None
+            for msg in reversed(messages):
+                if msg.get("role") in ("user", "assistant"):
+                    last_msg_content = msg.get("content")
+                    break
+            
+            last_msg = last_msg_content if last_msg_content else None
+            
             chats_list.append({
                 "id": row["chat_id"],
                 "name": row["chat_name"],
@@ -611,10 +762,18 @@ async def get_chat_history(req: ChatHistoryRequest):
     chat_data = await _get_chat_from_db(req.chat_id)
     if not chat_data or chat_data["user_id"] != req.user_id:
         raise HTTPException(status_code=4404, detail="Чат не найден или не принадлежит пользователю.")
+    
+    # *** НОВОЕ: Фильтруем "скрытые" системные сообщения перед отправкой в UI ***
+    # Мы хотим, чтобы UI отображал только 'user' и 'assistant'
+    visible_messages = [
+        msg for msg in chat_data["messages"]
+        if msg.get("role") in ("user", "assistant")
+    ]
+    
     return {
         "chat_id": chat_data["chat_id"],
         "name": chat_data["chat_name"],
-        "messages": chat_data["messages"]
+        "messages": visible_messages # Отправляем только видимые сообщения
     }
 
 @app.post("/delete_chat")
