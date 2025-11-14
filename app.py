@@ -1,11 +1,13 @@
-from fastapi import FastAPI, HTTPException
+# *** ИЗМЕНЕНИЕ: Новые импорты для FormData и чтения файлов ***
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import uvicorn
-from typing import Dict, List, Any, AsyncGenerator
+# *** ИЗМЕНЕНИЕ: Добавлен 'Optional' ***
+from typing import Dict, List, Any, AsyncGenerator, Optional
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse
 import aiosqlite
@@ -15,11 +17,18 @@ import asyncio
 from asyncddgs import aDDGS
 import aiohttp
 from bs4 import BeautifulSoup
-import re  # <-- Impor untuk ekspresi reguler
+import re  # <-- Impor для ekspresi reguler
 
+# *** ИЗМЕНЕНИЕ: Новые импорты для чтения файлов ***
+import io
+import pandas as pd
+import docx
+from pypdf import PdfReader
+from fastapi import Form, UploadFile, File
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # --- Regex для deteksi URL ---
-# Regex umum untuk menemukan URL
+# Regex umum для menemukan URL
 URL_REGEX = re.compile(r'https://[\w\.-]+[/\w\.-]*')
 # Regex для mengekstrak ID Google Doc
 DOC_RE = re.compile(r"/document/d/([\w-]+)")
@@ -189,13 +198,14 @@ ANALYSIS_PLAN_PROMPT_TEMPLATE = """
 
 
 # --- Модели ---
-class MessageRequest(BaseModel):
-    # *** ИЗМЕНЕНИЕ: Удалено поле 'personality' (остается удаленным) ***
-    message: str # Оригинальное сообщение из поля ввода
-    user_id: str
-    chat_id: str
-    file_content: str | None = None # *** ИЗМЕНЕНИЕ: Содержимое файла ***
-    file_name: str | None = None    # *** ИЗМЕНЕНИЕ: Имя файла ***
+# *** ИЗМЕНЕНИЕ: Модель MessageRequest больше не используется для /send_message_stream, ***
+# *** так как мы перешли на FormData. Оставляем для справки или удаляем. ***
+# class MessageRequest(BaseModel):
+#     message: str 
+#     user_id: str
+#     chat_id: str
+#     file_content: str | None = None 
+#     file_name: str | None = None   
 
 class ChatHistoryRequest(BaseModel):
     user_id: str
@@ -356,10 +366,10 @@ async def _fetch_google_doc_content(session: aiohttp.ClientSession, url: str) ->
     
     if doc_match:
         doc_id = doc_match.group(1)
-        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+        export_url = f"[https://docs.google.com/document/d/](https://docs.google.com/document/d/){doc_id}/export?format=txt"
     elif sheet_match:
         sheet_id = sheet_match.group(1)
-        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+        export_url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){sheet_id}/export?format=csv"
 
     if not export_url:
         return None # Это не Google Doc/Sheet, который мы можем обработать
@@ -582,27 +592,130 @@ async def _stream_cerebras_response(
             )
 
 
+# *** ИЗМЕНЕНИЕ: Новая вспомогательная функция для чтения файлов ***
+MAX_FILE_CONTEXT_LENGTH = 15000
+async def _read_uploaded_file(file: UploadFile) -> str:
+    """
+    Асинхронно читает UploadFile и возвращает его текстовое содержимое.
+    Поддерживает .txt, .csv, .xlsx, .docx.
+    """
+    filename = file.filename or ""
+    
+    # Определяем расширение. Если его нет, считаем 'txt'.
+    if '.' not in filename:
+        extension = 'txt'
+    else:
+        # Берем последнее расширение
+        extension = filename.rsplit('.', 1)[-1].lower()
+
+    print(f"Парсинг файла: {filename} (тип: {extension})")
+    
+    content_bytes = await file.read()
+    text_content = None
+
+    try:
+        if extension == 'xlsx':
+            bytes_io = io.BytesIO(content_bytes)
+            # Читаем все листы
+            xls = pd.ExcelFile(bytes_io, engine='openpyxl')
+            all_sheets = []
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                # Конвертируем DataFrame в CSV-подобный текст
+                all_sheets.append(f"--- Лист: {sheet_name} ---\n{df.to_csv(index=False)}")
+            text_content = "\n\n".join(all_sheets)
+        
+        elif extension == 'docx':
+            bytes_io = io.BytesIO(content_bytes)
+            doc = docx.Document(bytes_io)
+            all_paragraphs = [p.text for p in doc.paragraphs]
+            text_content = "\n".join(all_paragraphs)
+
+        elif extension == 'pdf':
+            bytes_io = io.BytesIO(content_bytes)
+            reader = PdfReader(bytes_io)
+            all_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+            text_content = "\n\n--- Новая страница ---\n\n".join(all_pages)
+        
+        elif extension in ('txt', 'csv', 'html') or '.' not in filename:
+            # Для текстовых форматов (включая CSV, HTML и файлы без расширения)
+            try:
+                text_content = content_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                # Запасной вариант
+                text_content = content_bytes.decode('windows-1251')
+            
+            if extension == 'html':
+                # Очищаем HTML от тегов
+                soup = BeautifulSoup(text_content, 'html.parser')
+                text_content = soup.get_text(separator="\n", strip=True)
+            
+            # Для .csv и .txt просто возвращаем текст как есть
+        
+        else:
+            # Если расширение неизвестно, но это не бинарный формат,
+            # пытаемся прочитать как текст в последнюю очередь
+            try:
+                text_content = content_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    text_content = content_bytes.decode('windows-1251')
+                except UnicodeDecodeError:
+                    print(f"Файл {filename} имеет неизвестное расширение и не является текстом.")
+                    return None # Не удалось распознать
+
+    except Exception as e:
+        print(f"Ошибка парсинга файла {filename} (ext: {extension}): {e}")
+        # Возвращаем None, чтобы обработчик мог сообщить об ошибке
+        return None
+
+    if text_content is None:
+        return None
+        
+    # Обрезаем контент, если он слишком длинный
+    if len(text_content) > MAX_FILE_CONTEXT_LENGTH:
+        text_content = text_content[:MAX_FILE_CONTEXT_LENGTH] + \
+                       f"\n... [СОДЕРЖИМОЕ ФАЙЛА '{filename}' ОБРЕЗАНО] ..."
+    
+    return text_content
+
+
 # --- Маршруты ---
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return FileResponse("templates/index.html", media_type="text/html")
 
 
+# *** ИЗМЕНЕНИЕ: Сигнатура и логика /send_message_stream обновлены для FormData ***
 @app.post("/send_message_stream")
-async def send_message_stream(req: MessageRequest): # <-- Модель обновлена
+async def send_message_stream(
+    message: str = Form(""),
+    user_id: str = Form(...),
+    chat_id: str = Form(...),
+    file: Optional[UploadFile] = File(None)
+):
     """
-    Обрабатывает сообщение, выполняет единый анализ (фильтр + поиск),
+    Обрабатывает сообщение (из FormData), выполняет единый анализ (фильтр + поиск),
     выполняет поиск (если нужно) и стримит ответ.
     """
-    # *** ИЗМЕНЕНИЕ: Проверяем, что есть хотя бы сообщение или файл ***
-    if not req.message and not req.file_content:
-        raise HTTPException(status_code=400, detail="Сообщение или файл должны присутствовать.")
+    
+    # 1. *** ИЗМЕНЕНИЕ: Читаем файл и получаем контент ***
+    file_content: str | None = None
+    file_name: str | None = None
+
+    if file:
+        file_name = file.filename
+        file_content = await _read_uploaded_file(file) # Используем новую функцию
+    
+    # Проверяем, что есть хотя бы сообщение или *успешно* прочитанный файл
+    if not message and not file_content:
+        raise HTTPException(status_code=400, detail="Сообщение или файл должны присутствовать (или файл не удалось прочитать).")
         
-    if not req.user_id or not req.chat_id:
+    if not user_id or not chat_id:
         raise HTTPException(status_code=400, detail="user_id и chat_id обязательны.")
 
-    # 1. Получение данных чата
-    chat_data = await _get_chat_from_db(req.chat_id)
+    # 2. Получение данных чата
+    chat_data = await _get_chat_from_db(chat_id)
     is_new_chat = chat_data is None
 
     if is_new_chat:
@@ -613,33 +726,33 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
         
     # *** ИЗМЕНЕНИЕ: Логика контекста (Приоритет: Файл -> GDoc -> Поиск) ***
 
-    # 2. Обработка прикрепленного файла (Приоритет 1)
-    if req.file_content:
-        print(f"Обнаружен прикрепленный файл: {req.file_name}")
+    # 3. Обработка прикрепленного файла (Приоритет 1)
+    if file_content and file_name:
+        print(f"Обнаружен прикрепленный файл: {file_name}")
         # Создаем "скрытое" системное сообщение
         file_context_message = {
             "role": "system",
-            "content": f"Контекст, извлеченный из прикрепленного файла '{req.file_name}' (используй эту информацию для ответа):\n{req.file_content}"
+            "content": f"Контекст, извлеченный из прикрепленного файла '{file_name}' (используй эту информацию для ответа):\n{file_content}"
         }
         current_messages.append(file_context_message)
 
-    # 3. Создание *видимого* сообщения пользователя
+    # 4. Создание *видимого* сообщения пользователя
     # (Фронтенд уже показал это пользователю, мы сохраняем это в БД)
-    visible_user_message_content = req.message
-    if req.file_name:
+    visible_user_message_content = message
+    if file_name:
         if visible_user_message_content:
-            visible_user_message_content += f"\n\n(Прикреплен файл: {req.file_name})"
+            visible_user_message_content += f"\n\n(Прикреплен файл: {file_name})"
         else:
-            visible_user_message_content = f"(Прикреплен файл: {req.file_name})"
+            visible_user_message_content = f"(Прикреплен файл: {file_name})"
     
-    # 4. Обработка ссылок Google Docs (Приоритет 2)
+    # 5. Обработка ссылок Google Docs (Приоритет 2)
     # Выполняется, ТОЛЬКО если не был прикреплен файл
-    urls = URL_REGEX.findall(req.message) # Ищем в *оригинальном* сообщении
+    urls = URL_REGEX.findall(message) # Ищем в *оригинальном* сообщении
     fetched_link_content = []
     has_google_links = False
     link_context_message = None
 
-    if urls and not req.file_content:
+    if urls and not file_content: # *** ИЗМЕНЕНИЕ: Проверяем 'not file_content' ***
         print(f"Найдено {len(urls)} URL (файл не прикреплен), загрузка...")
         async with aiohttp.ClientSession() as session:
             tasks = []
@@ -662,21 +775,21 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
             }
             current_messages.append(link_context_message)
             
-    elif urls and req.file_content:
+    elif urls and file_content:
         print("Обнаружены URL, но прикрепленный файл имеет приоритет. URL не будут загружены.")
 
-    # 5. Установка имени чата
+    # 6. Установка имени чата
     if is_new_chat:
         chat_name = visible_user_message_content[:30]
 
-    # 6. *** ЕДИНЫЙ ШАГ: Анализ, Фильтрация, Решение о поиске ***
+    # 7. *** ЕДИНЫЙ ШАГ: Анализ, Фильтрация, Решение о поиске ***
     # Используем Llama для принятия всех решений в одном вызове
     # Анализ идет по *видимому* сообщению
     analysis = await _analyze_and_plan(visible_user_message_content, current_messages[-5:])
     
     is_relevant = analysis.get("is_business", False)
     
-    # 7. Если фильтр не пройден
+    # 8. Если фильтр не пройден
     if not is_relevant:
         canned_response = "К сожалению, я могу отвечать только на вопросы, связанные с ведением бизнеса, маркетингом, финансами или юриспруденцией."
         return StreamingResponse(
@@ -684,16 +797,16 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
             media_type="text/event-stream"
         )
 
-    # 8. Определение "личности" (автоматически из analysis)
+    # 9. Определение "личности" (автоматически из analysis)
     final_personality_key = analysis.get("personality", "default")
     system_prompt = PERSONALITY_PROMPTS.get(final_personality_key, DEFAULT_PROMPT)
 
-    # 9. Выполнение поиска (Приоритет 3)
+    # 10. Выполнение поиска (Приоритет 3)
     search_context = None
     
     # Ищем, ТОЛЬКО если не было файла И не было ссылок GDocs
     if (
-        not req.file_content and not has_google_links and
+        not file_content and not has_google_links and # *** ИЗМЕНЕНИЕ: 'not file_content' ***
         analysis.get("needs_search") and 
         analysis.get("search_query") and 
         analysis.get("num_results") > 0
@@ -706,17 +819,17 @@ async def send_message_stream(req: MessageRequest): # <-- Модель обно�
         print("Поиск отменен, так как предоставлен файл или ссылка Google Doc.")
 
 
-    # 10. Добавляем текущее *видимое* сообщение пользователя в историю для генерации
+    # 11. Добавляем текущее *видимое* сообщение пользователя в историю для генерации
     current_messages.append({"role": "user", "content": visible_user_message_content})
 
-    # 11. Возвращаем StreamingResponse, который вызывает генератор Cerebras
+    # 12. Возвращаем StreamingResponse, который вызывает генератор Cerebras
     return StreamingResponse(
         _stream_cerebras_response(
             system_prompt,
             current_messages, # <-- Уже содержит (history + optional file/link_context + user_message)
             search_context,   # <-- Либо None, либо результаты поиска
-            req.chat_id,
-            req.user_id,
+            chat_id,
+            user_id,
             chat_name,
             is_new_chat
         ),
@@ -798,6 +911,4 @@ async def delete_chat(req: ChatHistoryRequest):
 
 # --- Точка входа ---
 if __name__ == "__main__":
-    # Напоминание: для работы поиска нужна библиотека
-    # pip install duckduckgo-search asyncddgs
     uvicorn.run(app, host="0.0.0.0", port=8000)

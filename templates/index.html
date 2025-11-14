@@ -23,10 +23,8 @@
 
     <div id="app-container">
 
-        <!-- КНОПКА СВОРАЧИВАНИЯ ОСТАЕТСЯ НА УРОВНЕ #app-container -->
         <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
-        <!-- ВСЁ ОСТАЛЬНОЕ ОБЕРТЫВАЕМ В #app-content -->
         <div id="app-content">
 
             <div id="sidebar-wrapper">
@@ -53,7 +51,6 @@
 
                     <div class="sidebar-footer">
                         <div class="user-info">
-                            <!-- Иконка пользователя / Логаута -->
                             <button id="user-menu-btn" title="Профиль и выход">
                                 <span class="avatar" id="user-avatar">A</span>
                                 <span id="user-nickname">WIP</span>
@@ -68,8 +65,8 @@
                 <div id="chat"></div>
                 <div class="input-area-container">
                     <div id="user-message-and-send">
-                        <label for="file-upload" id="file-upload-btn" title="Прикрепить .txt файл">📎</label>
-                        <input type="file" id="file-upload" accept=".txt" onchange="displayFileName()">
+<label for="file-upload" id="file-upload-btn" title="Прикрепить файл (.txt, .pdf, .docx, .xlsx...)">📎</label>
+                        <input type="file" id="file-upload" accept=".txt,.csv,.xlsx,.docx,.pdf,.html,text/plain,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,text/html" onchange="displayFileName()">
                         <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
                         <button onclick="sendMessageStream()" id="send-message">→</button>
                     </div>
@@ -77,7 +74,6 @@
                 </div>
             </main>
 
-            <!-- Окно авторизации -->
             <div id="auth-modal" class="modal">
                 <div class="modal-content">
                     <h2>PNIchat</h2>
@@ -94,7 +90,6 @@
                 </div>
             </div>
 
-            <!-- Модальное окно подтверждения выхода -->
             <div id="logout-modal" class="modal">
                 <div class="modal-content">
                     <h3>Выход</h3>
@@ -108,11 +103,7 @@
 
 
 
-        </div> <!-- конец #app-content -->
-
-    </div> <!-- конец #app-container -->
-
-    <script src="/static/scripts.js"></script>
+        </div> </div> <script src="/static/scripts.js"></script>
 </body>
 </html>
 

@@ -139,22 +139,16 @@ function toggleSidebar() {
     localStorage.setItem('sidebarCollapsed', isSidebarCollapsed);
 }
 
-// --- *** ИЗМЕНЕНИЕ: Новая функция для отображения имени файла *** ---
+// --- *** ИЗМЕНЕНИЕ: Функция для отображения имени файла *** ---
 function displayFileName() {
     const fileInput = document.getElementById('file-upload');
     const fileNameDisplay = document.getElementById('file-name-display');
 
     if (fileInput.files.length > 0) {
         const file = fileInput.files[0];
-        if (file.name.endsWith('.txt')) {
-            currentFile = file;
-            fileNameDisplay.textContent = `Файл: ${file.name}`;
-        } else {
-            alert("Пожалуйста, выберите только .txt файлы.");
-            fileInput.value = null;
-            currentFile = null;
-            fileNameDisplay.textContent = '';
-        }
+        // --- УБРАНА ВАЛИДАЦИЯ .txt ---
+        currentFile = file;
+        fileNameDisplay.textContent = `Файл: ${file.name}`;
     } else {
         currentFile = null;
         fileNameDisplay.textContent = '';
@@ -267,7 +261,7 @@ async function setCurrentChat(chatId) {
     }
 }
 
-// --- Отправка сообщения с использованием стриминга ---
+// --- *** ИЗМЕНЕНИЕ: Отправка сообщения (переход на FormData) *** ---
 async function sendMessageStream() {
     if (isStreaming) {
         console.log("🚫 Уже идет стриминг. Подождите или отмените.");
@@ -278,31 +272,22 @@ async function sendMessageStream() {
     const message = userInput.value.trim();
     if (!message && !currentFile) return;
 
-    let fileContent = null;
     let fileName = null;
     let displayMessage = message;
 
     if (currentFile) {
-        try {
-            fileContent = await currentFile.text();
-            fileName = currentFile.name;
-            if (displayMessage) {
-                displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
-            } else {
-                displayMessage = `(Прикреплен файл: ${fileName})`;
-            }
-        } catch (e) {
-            console.error("Ошибка чтения файла:", e);
-            alert("Не удалось прочитать файл.");
-            clearFileInput();
-            return;
+        fileName = currentFile.name;
+        if (displayMessage) {
+            displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
+        } else {
+            displayMessage = `(Прикреплен файл: ${fileName})`;
         }
     }
 
     addMessageToChat('user', displayMessage);
     userInput.value = '';
     autoResize();
-    clearFileInput();
+    // Файл очистим *после* отправки
 
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
@@ -331,16 +316,23 @@ async function sendMessageStream() {
     let fullReply = "";
 
     try {
+        // *** ИЗМЕНЕНИЕ: Создаем FormData вместо JSON ***
+        const formData = new FormData();
+        formData.append('message', message);
+        formData.append('user_id', userId);
+        formData.append('chat_id', currentChatId);
+        
+        if (currentFile) {
+            formData.append('file', currentFile); // Отправляем сам файл
+        }
+        
+        clearFileInput(); // Очищаем файл *после* добавления в FormData
+
+        // *** ИЗМЕНЕНИЕ: Отправляем FormData. Убираем 'Content-Type' (браузер добавит сам) ***
         const response = await fetch('/send_message_stream', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: message,
-                user_id: userId,
-                chat_id: currentChatId,
-                file_content: fileContent,
-                file_name: fileName
-            }),
+            // headers: { 'Content-Type': 'application/json' }, // <-- УБРАЛИ
+            body: formData, // <-- Используем FormData
             signal: signal
         });
 
@@ -386,6 +378,7 @@ async function sendMessageStream() {
         if (activeItem) activeItem.classList.add('active');
     }
 }
+// --- *** КОНЕЦ ИЗМЕНЕНИЯ *** ---
 
 // --- Рендер списка чатов ---
 function renderChatsList() {
