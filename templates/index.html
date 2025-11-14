@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Krona+One&display=swap" rel="stylesheet">
-
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <title>PNIbot</title>
 
     <link rel="stylesheet" href="/static/styles.css" />
@@ -23,47 +23,110 @@
 
     <div id="app-container">
 
-        <div id="sidebar-wrapper">
-            <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
+        <!-- КНОПКА СВОРАЧИВАНИЯ ОСТАЕТСЯ НА УРОВНЕ #app-container -->
+        <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
-            <aside id="sidebar">
-                <div class="sidebar-header">
+        <!-- ВСЁ ОСТАЛЬНОЕ ОБЕРТЫВАЕМ В #app-content -->
+        <div id="app-content">
+
+            <div id="sidebar-wrapper">
+                <aside id="sidebar">
+                    <div class="sidebar-header">
+                        <h2>PNIchat</h2>
+                        <button id="new-chat-btn" onclick="createNewChat()">
+                            <i class="fas fa-comment-dots"></i>
+                            <span class="plus">+</span>
+                        </button>
+                    </div>
+
+                    <div class="search-box">
+                        <input type="text" id="search-chats" placeholder="Поиск в чатах" oninput="filterChats()">
+                        <span class="search-icon">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="11" cy="11" r="8" />
+                                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            </svg>
+                        </span>
+                    </div>
+
+                    <div id="chats-list"></div>
+
+                    <div class="sidebar-footer">
+                        <div class="user-info">
+                            <!-- Иконка пользователя / Логаута -->
+                            <button id="user-menu-btn" title="Профиль и выход">
+                                <span class="avatar" id="user-avatar">A</span>
+                                <span id="user-nickname">WIP</span>
+                                <i class="fas fa-sign-out-alt" id="logout-icon"></i>
+                            </button>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+
+            <main id="main-chat">
+                <div id="chat"></div>
+                <div class="input-area-container">
+                    <div id="user-message-and-send">
+                        <label for="file-upload" id="file-upload-btn" title="Прикрепить .txt файл">📎</label>
+                        <input type="file" id="file-upload" accept=".txt" onchange="displayFileName()">
+                        <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
+                        <button onclick="sendMessageStream()" id="send-message">→</button>
+                    </div>
+                    <div id="file-name-display"></div>
+                </div>
+            </main>
+
+            <!-- Окно авторизации -->
+            <div id="auth-modal" class="modal">
+                <div class="modal-content">
                     <h2>PNIchat</h2>
-                    <button id="new-chat-btn" onclick="createNewChat()">+ Новый чат</button>
-                </div>
-
-                <div class="search-box">
-                    <input type="text" id="search-chats" placeholder="Поиск в чатах" oninput="filterChats()">
-                    <span class="search-icon"></span>
-                </div>
-
-                <div id="chats-list"></div>
-
-                <div class="sidebar-footer">
-                    <div class="user-info">
-                        <span class="avatar">A</span>
-                        <span>WIP</span>
+                    <form id="login-form">
+                        <input type="text" id="login-input" placeholder="Логин" required>
+                        <input type="password" id="password-input" placeholder="Пароль" required>
+                        <button type="submit" id="login-btn">Войти</button>
+                    </form>
+                    <div class="auth-links">
+                        <a href="#" id="forgot-password">Забыли пароль?</a>
+                        <span>или</span>
+                        <a href="#" id="register-link">Зарегистрироваться</a>
                     </div>
                 </div>
-            </aside>
-        </div>
-
-        <main id="main-chat">
-            
-            <div id="chat"></div>
-
-            <div class="input-area-container"> <div id="user-message-and-send">
-                    <label for="file-upload" id="file-upload-btn" title="Прикрепить .txt файл">📎</label>
-                    <input type="file" id="file-upload" accept=".txt" onchange="displayFileName()">
-                    
-                    <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
-                    <button onclick="sendMessageStream()" id="send-message">→</button>
-                </div>
-                <div id="file-name-display"></div>
             </div>
-        </main>
-    </div>
+
+            <!-- Модальное окно подтверждения выхода -->
+            <div id="logout-modal" class="modal">
+                <div class="modal-content">
+                    <h3>Выход</h3>
+                    <p>Вы уверены, что хотите выйти?</p>
+                    <div class="modal-buttons">
+                        <button id="confirm-logout">Да</button>
+                        <button id="cancel-logout">Нет</button>
+                    </div>
+                </div>
+            </div>
+
+
+
+        </div> <!-- конец #app-content -->
+
+    </div> <!-- конец #app-container -->
 
     <script src="/static/scripts.js"></script>
 </body>
 </html>
+
+
+<!-- -->
+<!-- -->
+<!-- -->
+<!-- -->
+<!-- -->
+<!-- -->
+<!-- -->
+<!--ВАЖНОООООО в СТРОКЕ 595 ФАЙЛА СО СКРИПТАМИ ИДЕТ ТОЛЬКО ИМИТАЦИЯ АВТОРИЗАЦИИ!!!! 
+    ЕЕ НАДО БУДЕТ ЗАМЕНИТЬ 
+    
+    
+    
+    -->
