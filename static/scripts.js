@@ -1,13 +1,24 @@
 // --- Глобальные переменные ---
 let currentChatId = null; // ID текущего чата
 let chats = []; // Массив всех чатов
+// *** ИЗМЕНЕНИЕ: userId и isAuthenticated УДАЛЕНЫ ***
+// let userId = localStorage.getItem('chat_user_id'); // <-- УДАЛЕНО
+// let isAuthenticated = false; // <-- УДАЛЕНО
 let isSidebarCollapsed = false;
 let currentFile = null;
+
+// *** ИЗМЕНЕНИЕ: currentUserNickname теперь берется из localStorage ***
+// let currentUserNickname = "WIP"; // <-- УДАЛЕНО
+
 // --- Переменные для управления стримингом ---
 let isStreaming = false; // Флаг, показывающий, идёт ли сейчас стриминг ответа
 let activeFetchController = null; // Контроллер для отмены запроса, если нужно
 
+// *** ИЗМЕНЕНИЕ: Глобальная переменная userId УДАЛЕНА ***
+// (Старая логика генерации ID удалена)
+
 // --- *** НОВАЯ ФУНКЦИЯ: Хэширование пароля (SHA-256) *** ---
+// (Без изменений)
 async function hashPassword(password) {
     const encoder = new TextEncoder();
     const data = encoder.encode(password);
@@ -17,18 +28,21 @@ async function hashPassword(password) {
     return hashHex;
 }
 
-// --- Функции управления аутентификацией ---
+// *** ИЗМЕНЕНИЕ: Новые функции для управления состоянием аутентификации ***
 function getToken() {
     return localStorage.getItem('access_token');
 }
+
 function getNickname() {
     return localStorage.getItem('currentUserNickname');
 }
+
 function storeCredentials(token, nickname) {
     localStorage.setItem('access_token', token);
     localStorage.setItem('currentUserNickname', nickname);
     updateUIForAuthState();
 }
+
 function clearCredentials() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('currentUserNickname');
@@ -40,9 +54,11 @@ function updateUIForAuthState() {
     const token = getToken();
     const nickname = getNickname();
     const isAuthenticated = !!token; // Авторизован, если есть токен
+
     const userMenuBtn = document.getElementById('user-menu-btn');
     const userAvatar = document.getElementById('user-avatar');
     const userNickname = document.getElementById('user-nickname');
+
     if (isAuthenticated && nickname) {
         userMenuBtn.classList.add('authenticated');
         userNickname.textContent = nickname;
@@ -52,6 +68,7 @@ function updateUIForAuthState() {
         userNickname.textContent = "WIP"; // Будет скрыто модальным окном
         userAvatar.textContent = "A"; // По умолчанию
     }
+
     // Обновляем мобильную версию
     updateMobileAuthState();
 }
@@ -61,21 +78,11 @@ function openAuthModal() {
     const authModal = document.getElementById('auth-modal');
     authModal.style.display = 'flex';
     document.getElementById('login-input').focus();
-    
-    // Если пользователь не авторизован, окно всегда принудительное
-    if (!getToken()) {
-        authModal.classList.add('mandatory');
-    }
 }
 
 // --- Функция для закрытия окна авторизации ---
 function closeAuthModal() {
-    const authModal = document.getElementById('auth-modal');
-    // Если окно принудительное и пользователь не авторизован, не закрываем его
-    if (authModal.classList.contains('mandatory') && !getToken()) {
-        return;
-    }
-    authModal.style.display = 'none';
+    document.getElementById('auth-modal').style.display = 'none';
     document.getElementById('login-form').reset();
 }
 
@@ -91,14 +98,16 @@ function closeLogoutModal() {
 
 // --- Функция для выхода из системы ---
 function logout() {
-    // Очищаем токен и никнейм
+    // *** ИЗМЕНЕНИЕ: Очищаем токен и никнейм ***
     clearCredentials();
     console.log("Пользователь вышел.");
+
     // Очищаем чаты
     chats = [];
     renderChatsList();
     document.getElementById('chat').innerHTML = '';
     document.getElementById('chat-mobile').innerHTML = '';
+
     // Показать обязательное окно входа
     const authModal = document.getElementById('auth-modal');
     authModal.style.display = 'flex';
@@ -108,38 +117,32 @@ function logout() {
 
 // --- Инициализация приложения ---
 document.addEventListener('DOMContentLoaded', async () => {
+    
     // --- Инициализация состояния авторизации из localStorage ---
     updateUIForAuthState();
     const token = getToken();
     
-    // Всегда показываем модальное окно авторизации при загрузке
-    const authModal = document.getElementById('auth-modal');
-    if (!token) {
-        console.log("Токен не найден, отображение обязательного окна входа.");
-        authModal.style.display = 'flex';
-        authModal.classList.add('mandatory');
-        document.getElementById('login-input').focus();
-    } else {
-        // Проверяем валидность токена
-        try {
-            console.log("Найден токен, проверка валидности...");
-            await loadChats();
-            console.log("Токен валиден, загрузка чатов...");
-            // Выбираем самый новый чат или создаём новый
-            if (chats.length > 0) {
-                await setCurrentChat(chats[0].id);
-            } else {
-                createNewChat();
-            }
-        } catch (error) {
-            console.log("Токен недействителен, требуется повторная авторизация.");
-            logout(); // Это очистит токен и обновит UI
-            authModal.style.display = 'flex';
-            authModal.classList.add('mandatory');
-            document.getElementById('login-input').focus();
+    if (token) {
+        // Пользователь (вероятно) авторизован
+        console.log("Найден токен, загрузка чатов...");
+        await loadChats();
+
+        // Выбираем самый новый чат или создаём новый
+        if (chats.length > 0) {
+            await setCurrentChat(chats[0].id);
+        } else {
+            createNewChat();
         }
+    } else {
+        // Пользователь не авторизован
+        console.log("Токен не найден, отображение окна входа.");
+        setAuthState(false);
+        openAuthModal();
+        document.getElementById('auth-modal').classList.add('mandatory');
     }
-    
+    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+
     // --- (Остальная часть DOMContentLoaded без изменений) ---
     const savedState = localStorage.getItem('sidebarCollapsed');
     if (savedState === 'true') {
@@ -194,38 +197,43 @@ async function loadChats() {
         renderChatsList();
         return;
     }
+    
     try {
-        // Отправляем токен в заголовке, метод GET, без тела
+        // *** ИЗМЕНЕНИЕ: Отправляем токен в заголовке, метод GET, без тела ***
         const response = await fetch('/get_chats', {
             method: 'GET',
             headers: { 
                 'Authorization': 'Bearer ' + token
             }
         });
+
         if (response.status === 401) {
             // Токен истек или невалиден
             console.error("Токен недействителен. Требуется повторный вход.");
             logout(); // Разлогиниваем пользователя
-            throw new Error("Токен недействителен");
+            return;
         }
         if (!response.ok) {
             throw new Error('Не удалось загрузить чаты');
         }
+
         const data = await response.json();
         chats = data.chats;
         renderChatsList();
+
     } catch (e) {
         console.error("Ошибка загрузки чатов:", e);
         chats = [];
-        throw e; // Пробрасываем ошибку для обработки в вызывающем коде
     }
 }
 
 // --- Функция переключения состояния сайдбара ---
+// (Без изменений)
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const appContainer = document.getElementById('app-container');
     const toggleBtn = document.getElementById('toggle-sidebar-btn');
+
     if (isSidebarCollapsed) {
         sidebar.classList.remove('collapsed');
         appContainer.classList.remove('sidebar-collapsed');
@@ -235,14 +243,17 @@ function toggleSidebar() {
         appContainer.classList.add('sidebar-collapsed');
         toggleBtn.textContent = '←';
     }
+
     isSidebarCollapsed = !isSidebarCollapsed;
     localStorage.setItem('sidebarCollapsed', isSidebarCollapsed);
 }
 
 // --- Функция для отображения имени файла ---
+// (Без изменений)
 function displayFileName() {
     const fileInput = document.getElementById('file-upload');
     const fileNameDisplay = document.getElementById('file-name-display');
+
     if (fileInput.files.length > 0) {
         const file = fileInput.files[0];
         currentFile = file;
@@ -254,6 +265,7 @@ function displayFileName() {
 }
 
 // --- Сброс прикрепленного файла ---
+// (Без изменений)
 function clearFileInput() {
     document.getElementById('file-upload').value = null;
     document.getElementById('file-name-display').textContent = '';
@@ -262,12 +274,13 @@ function clearFileInput() {
 
 // --- Создание нового чата ---
 function createNewChat() {
-    // Проверяем по токену
+    // *** ИЗМЕНЕНИЕ: Проверяем по токену ***
     if (!getToken()) {
         openAuthModal();
         document.getElementById('auth-modal').classList.add('mandatory');
         return;
     }
+    
     const chatId = crypto.randomUUID ? crypto.randomUUID() : 'chat-' + Date.now();
     const newChat = {
         id: chatId,
@@ -292,10 +305,12 @@ async function setCurrentChat(chatId) {
         }
         return;
     }
+
     if (isStreaming) {
         console.log("🚫 Невозможно переключить чат во время стриминга.");
         return;
     }
+
     // (Логика очистки пустого чата без изменений)
     const previousChat = chats.find(c => c.id === currentChatId);
     if (previousChat && previousChat.id !== chatId) {
@@ -305,31 +320,36 @@ async function setCurrentChat(chatId) {
             renderChatsList();
         }
     }
+
     if (isStreaming && activeFetchController) {
         activeFetchController.abort();
         isStreaming = false;
         activeFetchController = null;
         console.log("⚠️ Активный стриминг отменен из-за смены чата.");
     }
+
     currentChatId = chatId;
     const chat = chats.find(c => c.id === chatId);
     if (!chat) {
         console.error(`Чат с ID ${chatId} не найден в локальном кэше.`);
         if (chats.length === 0) {
             createNewChat();
-        } else {
-            await setCurrentChat(chats[0].id);
+            return;
         }
+        await setCurrentChat(chats[0].id);
         return;
     }
+
     const chatDiv = document.getElementById('chat');
     chatDiv.innerHTML = '';
     clearFileInput();
+
     document.querySelectorAll('.chat-item').forEach(item => {
         item.classList.remove('active');
     });
     const activeItem = document.querySelector(`.chat-item[data-id="${chatId}"]`);
     if (activeItem) activeItem.classList.add('active');
+
     // Если чат новый (messages: []), не делаем запрос
     if (chat.messages && chat.messages.length > 0) {
         chat.messages.forEach(msg => {
@@ -343,6 +363,7 @@ async function setCurrentChat(chatId) {
         });
         return;
     }
+    
     // Если у чата нет 'messages', значит он с сервера и мы загружаем историю
     // (кроме случая chat.messages = [], это новый пустой чат)
     if (chat.messages) { // chat.messages === []
@@ -351,13 +372,15 @@ async function setCurrentChat(chatId) {
         chatDivMobile.innerHTML = '';
         return;
     }
+
     const token = getToken();
     if (!token) {
         logout(); // Если нет токена, разлогинить
         return;
     }
+
     try {
-        // Отправляем токен и chat_id
+        // *** ИЗМЕНЕНИЕ: Отправляем токен и chat_id ***
         const response = await fetch('/get_chat_history', {
             method: 'POST',
             headers: { 
@@ -366,6 +389,7 @@ async function setCurrentChat(chatId) {
             },
             body: JSON.stringify({ chat_id: chatId })
         });
+
         if (response.status === 401) {
             logout();
             return;
@@ -373,6 +397,7 @@ async function setCurrentChat(chatId) {
         if (!response.ok) {
             throw new Error('Не удалось загрузить историю чата');
         }
+
         const chatHistory = await response.json();
         chatHistory.messages.forEach(msg => {
             addMessageToChat(msg.role, msg.content);
@@ -383,6 +408,7 @@ async function setCurrentChat(chatId) {
         chatHistory.messages.forEach(msg => {
             addMessageToChatMobile(msg.role, msg.content);
         });
+
     } catch (error) {
         console.error("Ошибка загрузки истории чата:", error);
         addMessageToChat('ai', `Не удалось загрузить историю: ${error.message}`);
@@ -396,31 +422,36 @@ async function sendMessageStream() {
         console.log("🚫 Уже идет стриминг. Подождите или отмените.");
         return;
     }
+    
     const token = getToken();
     if (!token) {
         logout(); // Разлогинить, если нет токена
         return;
     }
+
     const userInput = document.getElementById('userInput');
     const message = userInput.value.trim();
     if (!message && !currentFile) return;
+
     // (Логика displayMessage без изменений)
     let fileName = null;
     let displayMessage = message;
     if (currentFile) {
         fileName = currentFile.name;
         if (displayMessage) {
-            displayMessage += `
-(Прикреплен файл: ${fileName})`;
+            displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
         } else {
             displayMessage = `(Прикреплен файл: ${fileName})`;
         }
     }
+
     addMessageToChat('user', displayMessage);
     userInput.value = '';
     autoResize();
+
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
+
     if (currentChat.messages) {
         currentChat.messages.push({
             role: 'user',
@@ -428,10 +459,12 @@ async function sendMessageStream() {
             timestamp: new Date().toISOString()
         });
     }
+
     isStreaming = true;
     activeFetchController = new AbortController();
     const signal = activeFetchController.signal;
     disableSidebarActions(true);
+
     const chatDiv = document.getElementById('chat');
     const aiMessageDiv = document.createElement('div');
     aiMessageDiv.className = 'ai-message';
@@ -439,16 +472,21 @@ async function sendMessageStream() {
     aiMessageDiv.innerHTML = '<strong>PNI:</strong> ';
     aiMessageDiv.appendChild(aiMessageContent);
     chatDiv.appendChild(aiMessageDiv);
+
     let fullReply = "";
+
     try {
         const formData = new FormData();
         formData.append('message', message);
+        // *** ИЗМЕНЕНИЕ: user_id УДАЛЕН ***
+        // formData.append('user_id', userId); // <-- УДАЛЕНО
         formData.append('chat_id', currentChatId);
         if (currentFile) {
             formData.append('file', currentFile);
         }
         clearFileInput();
-        // Добавляем 'Authorization' header
+
+        // *** ИЗМЕНЕНИЕ: Добавляем 'Authorization' header ***
         const response = await fetch('/send_message_stream', {
             method: 'POST',
             headers: {
@@ -457,6 +495,7 @@ async function sendMessageStream() {
             body: formData,
             signal: signal
         });
+        
         if (response.status === 401) {
             logout(); // Токен истек
             throw new Error("Сессия истекла. Пожалуйста, войдите заново.");
@@ -465,21 +504,26 @@ async function sendMessageStream() {
             const errText = await response.text();
             throw new Error(`Ошибка API (${response.status}): ${errText}`);
         }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
+
             const chunk = decoder.decode(value);
             fullReply += chunk;
             aiMessageContent.innerHTML = marked.parse(fullReply);
             chatDiv.scrollTop = chatDiv.scrollHeight;
         }
+
         // Если это был новый чат, удаляем 'messages'
         // чтобы при следующем выборе он загрузился с сервера
         if (currentChat.messages) {
             delete currentChat.messages;
         }
+
     } catch (error) {
         if (error.name === 'AbortError') {
             console.log("Стриминг успешно отменен.");
@@ -490,6 +534,7 @@ async function sendMessageStream() {
             console.error('Ошибка стриминга:', error);
             aiMessageContent.innerHTML = `<strong>Ошибка:</strong> ${error.message}`;
         }
+
     } finally {
         isStreaming = false;
         activeFetchController = null;
@@ -503,6 +548,7 @@ async function sendMessageStream() {
 }
 
 // --- Рендер списка чатов ---
+// (Без изменений)
 function renderChatsList() {
     const list = document.getElementById('chats-list');
     list.innerHTML = '';
@@ -560,16 +606,19 @@ async function deleteChat(chatId, chatName) {
         alert("Нельзя удалить чат во время генерации ответа.");
         return;
     }
+
     const token = getToken();
     if (!token) {
         logout();
         return;
     }
+
     if (!confirm(`Вы уверены, что хотите удалить чат "${chatName}"?`)) {
         return;
     }
+
     try {
-        // Отправляем токен и chat_id
+        // *** ИЗМЕНЕНИЕ: Отправляем токен и chat_id ***
         const response = await fetch('/delete_chat', {
             method: 'POST',
             headers: { 
@@ -578,6 +627,7 @@ async function deleteChat(chatId, chatName) {
             },
             body: JSON.stringify({ chat_id: chatId })
         });
+
         if (response.status === 401) {
             logout();
             return;
@@ -586,7 +636,9 @@ async function deleteChat(chatId, chatName) {
             const err = await response.json();
             throw new Error(err.detail || 'Не удалось удалить чат');
         }
+
         chats = chats.filter(c => c.id !== chatId);
+
         if (currentChatId === chatId) {
             document.getElementById('chat').innerHTML = '';
             document.getElementById('chat-mobile').innerHTML = '';
@@ -597,6 +649,7 @@ async function deleteChat(chatId, chatName) {
             }
         }
         renderChatsList();
+
     } catch (error) {
         console.error("Ошибка удаления чата:", error);
         alert(`Ошибка: ${error.message}`);
@@ -604,11 +657,13 @@ async function deleteChat(chatId, chatName) {
 }
 
 // --- Поиск чатов ---
+// (Без изменений)
 function filterChats() {
     renderChatsList();
 }
 
 // --- Авто-растягивание поля ввода ---
+// (Без изменений)
 function autoResize() {
     const userInput = document.getElementById('userInput');
     userInput.style.height = 'auto';
@@ -617,6 +672,7 @@ function autoResize() {
 }
 
 // --- Добавление сообщения в чат ---
+// (Без изменений)
 function addMessageToChat(role, content) {
     const chatDiv = document.getElementById('chat');
     const messageDiv = document.createElement('div');
@@ -639,6 +695,7 @@ function addMessageToChat(role, content) {
 }
 
 // --- Блокировка/разблокировка действий в сайдбаре ---
+// (Без изменений)
 function disableSidebarActions(disable) {
     const list = document.getElementById('chats-list');
     const newChatBtn = document.getElementById('new-chat-btn');
@@ -654,12 +711,14 @@ function disableSidebarActions(disable) {
 }
 
 // --- Переключение модели (на будущее) ---
+// (Без изменений)
 function switchModel(modelName) {
     console.log("Выбрана модель:", modelName);
     localStorage.setItem('selected_model', modelName);
 }
 
 // --- Функция для открытия окна регистрации ---
+// (Без изменений)
 function openRegisterModal() {
     document.getElementById('auth-modal').style.display = 'none';
     document.getElementById('register-modal').style.display = 'flex';
@@ -667,21 +726,20 @@ function openRegisterModal() {
 }
 
 // --- Функция для закрытия окна регистрации ---
+// (Без изменений)
 function closeRegisterModal() {
-    const authModal = document.getElementById('auth-modal');
-    // Если окно регистрации открывалось из обязательного окна входа
-    // и пользователь не авторизован, то снова показываем обязательное окно входа
-    if (authModal.classList.contains('mandatory') && !getToken()) {
-        authModal.style.display = 'flex';
-        return;
-    }
     document.getElementById('register-modal').style.display = 'none';
     document.getElementById('register-form').reset();
 }
 
+
 // --- *** ФУНКЦИИ ДЛЯ СИНХРОНИЗАЦИИ ПК И МОБИЛЬНОЙ ВЕРСИЙ *** ---
+// (Логика рендеринга без изменений, но вызовы API внутри них
+//  теперь будут использовать обновленные `sendMessageStreamMobile` и `deleteChatMobile`)
+
 // Функция для обновления мобильного списка чатов
 function updateMobileChatsList() {
+    // (Без изменений)
     const mobileList = document.getElementById('chats-list-mobile');
     if (!mobileList) return;
     mobileList.innerHTML = '';
@@ -735,11 +793,14 @@ function updateMobileChatsList() {
 
 // Функция для обновления состояния авторизации в мобильной версии
 function updateMobileAuthState() {
+    // *** ИЗМЕНЕНИЕ: Логика на основе getNickname() ***
     const nickname = getNickname();
     const isAuthenticated = !!nickname;
+
     const userMenuBtnMobile = document.getElementById('user-menu-btn-mobile');
     const userAvatarMobile = document.getElementById('user-avatar-mobile');
     const userNicknameMobile = document.getElementById('user-nickname-mobile');
+
     if (isAuthenticated) {
         userMenuBtnMobile.classList.add('authenticated');
         userNicknameMobile.textContent = nickname;
@@ -752,6 +813,7 @@ function updateMobileAuthState() {
 }
 
 // Функция для переключения мобильного сайдбара
+// (Без изменений)
 function toggleMobileSidebar() {
     const sidebar = document.getElementById('sidebar-mobile');
     sidebar.classList.toggle('open');
@@ -763,30 +825,34 @@ async function sendMessageStreamMobile() {
         console.log("🚫 Уже идет стриминг. Подождите или отмените.");
         return;
     }
-    // Проверка токена
+    
+    // *** ИЗМЕНЕНИЕ: Проверка токена ***
     const token = getToken();
     if (!token) {
         logout();
         return;
     }
+
     const userInput = document.getElementById('userInput-mobile');
     const message = userInput.value.trim();
     if (!message && !currentFile) return;
+
     // (Логика displayMessage без изменений)
     let fileName = null;
     let displayMessage = message;
     if (currentFile) {
         fileName = currentFile.name;
         if (displayMessage) {
-            displayMessage += `
-(Прикреплен файл: ${fileName})`;
+            displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
         } else {
             displayMessage = `(Прикреплен файл: ${fileName})`;
         }
     }
+
     addMessageToChatMobile('user', displayMessage);
     userInput.value = '';
     autoResizeMobile();
+
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
     if (currentChat.messages) {
@@ -796,10 +862,12 @@ async function sendMessageStreamMobile() {
             timestamp: new Date().toISOString()
         });
     }
+
     isStreaming = true;
     activeFetchController = new AbortController();
     const signal = activeFetchController.signal;
     disableSidebarActions(true); // Блокирует и ПК, и мобильный
+
     const chatDiv = document.getElementById('chat-mobile');
     const aiMessageDiv = document.createElement('div');
     aiMessageDiv.className = 'ai-message';
@@ -807,16 +875,20 @@ async function sendMessageStreamMobile() {
     aiMessageDiv.innerHTML = '<strong>PNI:</strong> ';
     aiMessageDiv.appendChild(aiMessageContent);
     chatDiv.appendChild(aiMessageDiv);
+
     let fullReply = "";
     try {
         const formData = new FormData();
         formData.append('message', message);
+        // *** ИЗМЕНЕНИЕ: user_id УДАЛЕН ***
+        // formData.append('user_id', userId); // <-- УДАЛЕНО
         formData.append('chat_id', currentChatId);
         if (currentFile) {
             formData.append('file', currentFile);
         }
         clearFileInputMobile();
-        // Добавляем 'Authorization' header
+
+        // *** ИЗМЕНЕНИЕ: Добавляем 'Authorization' header ***
         const response = await fetch('/send_message_stream', {
             method: 'POST',
             headers: {
@@ -825,6 +897,7 @@ async function sendMessageStreamMobile() {
             body: formData,
             signal: signal
         });
+
         if (response.status === 401) {
             logout();
             throw new Error("Сессия истекла. Пожалуйста, войдите заново.");
@@ -833,8 +906,10 @@ async function sendMessageStreamMobile() {
             const errText = await response.text();
             throw new Error(`Ошибка API (${response.status}): ${errText}`);
         }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -843,6 +918,7 @@ async function sendMessageStreamMobile() {
             aiMessageContent.innerHTML = marked.parse(fullReply);
             chatDiv.scrollTop = chatDiv.scrollHeight;
         }
+
         if (currentChat.messages) {
             delete currentChat.messages;
         }
@@ -867,6 +943,7 @@ async function sendMessageStreamMobile() {
 }
 
 // Функция для добавления сообщения в мобильный чат
+// (Без изменений)
 function addMessageToChatMobile(role, content) {
     const chatDiv = document.getElementById('chat-mobile');
     const messageDiv = document.createElement('div');
@@ -922,17 +999,19 @@ async function deleteChatMobile(chatId, chatName) {
         alert("Нельзя удалить чат во время генерации ответа.");
         return;
     }
-    // Проверка токена
+    
+    // *** ИЗМЕНЕНИЕ: Проверка токена ***
     const token = getToken();
     if (!token) {
         logout();
         return;
     }
+
     if (!confirm(`Вы уверены, что хотите удалить чат "${chatName}"?`)) {
         return;
     }
     try {
-        // Добавляем 'Authorization' header
+        // *** ИЗМЕНЕНИЕ: Добавляем 'Authorization' header ***
         const response = await fetch('/delete_chat', {
             method: 'POST',
             headers: { 
@@ -941,6 +1020,7 @@ async function deleteChatMobile(chatId, chatName) {
             },
             body: JSON.stringify({ chat_id: chatId })
         });
+
         if (response.status === 401) {
             logout();
             return;
@@ -965,7 +1045,9 @@ async function deleteChatMobile(chatId, chatName) {
     }
 }
 
+
 // --- Обработчики событий ---
+// (Без изменений)
 const userInput = document.getElementById('userInput');
 userInput.addEventListener('input', autoResize);
 userInput.addEventListener('keypress', function (e) {
@@ -977,11 +1059,12 @@ userInput.addEventListener('keypress', function (e) {
 document.getElementById('toggle-sidebar-btn').addEventListener('click', toggleSidebar);
 
 // --- НОВЫЕ ОБРАБОТЧИКИ ДЛЯ АВТОРИЗАЦИИ ---
+
 // Обработчик клика по кнопке пользователя в footer
 document.addEventListener('click', function (e) {
     if (e.target.closest('#user-menu-btn')) {
         e.stopPropagation();
-        // Проверяем по токену
+        // *** ИЗМЕНЕНИЕ: Проверяем по токену ***
         if (getToken()) {
             openLogoutModal();
         } else {
@@ -990,33 +1073,40 @@ document.addEventListener('click', function (e) {
     }
 });
 
-// Обработчик отправки формы входа (получаем токен)
+// *** ИЗМЕНЕНИЕ: Обработчик отправки формы входа (получаем токен) ***
 document.addEventListener('submit', async function (e) {
     if (e.target.id === 'login-form') {
         e.preventDefault();
         const login = document.getElementById('login-input').value.trim();
         const password = document.getElementById('password-input').value.trim();
         const loginBtn = document.getElementById('login-btn');
+
         if (!login || !password) {
             alert("Пожалуйста, заполните все поля.");
             return;
         }
         loginBtn.disabled = true;
         loginBtn.textContent = "Вход...";
+
         try {
             const hashedPassword = await hashPassword(password);
+            
             const response = await fetch('/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ login: login, pass_hash: hashedPassword })
             });
+
             if (response.ok) {
                 const data = await response.json();
-                // Сохраняем токен и никнейм
+                
+                // *** НОВОЕ: Сохраняем токен и никнейм ***
                 storeCredentials(data.access_token, data.nickname);
+
                 document.getElementById('auth-modal').classList.remove('mandatory');
                 closeAuthModal();
                 console.log(`Пользователь ${data.nickname} вошел.`);
+
                 // Загружаем чаты и устанавливаем первый
                 await loadChats();
                 if (chats.length > 0) {
@@ -1024,10 +1114,12 @@ document.addEventListener('submit', async function (e) {
                 } else {
                     createNewChat();
                 }
+
             } else {
                 const error = await response.json();
                 alert(`Ошибка входа: ${error.detail}`);
             }
+
         } catch (error) {
             console.error("Ошибка сети при входе:", error);
             alert("Не удалось подключиться к серверу.");
@@ -1038,13 +1130,13 @@ document.addEventListener('submit', async function (e) {
     }
 });
 
+// (Остальные обработчики без изменений)
 document.addEventListener('click', function (e) {
     if (e.target.id === 'register-link') {
         e.preventDefault();
         openRegisterModal();
     }
 });
-
 document.addEventListener('click', function (e) {
     if (e.target.id === 'confirm-logout') {
         logout();
@@ -1053,7 +1145,6 @@ document.addEventListener('click', function (e) {
         closeLogoutModal();
     }
 });
-
 window.addEventListener('click', function (event) {
     const authModal = document.getElementById('auth-modal');
     const logoutModal = document.getElementById('logout-modal');
@@ -1069,7 +1160,8 @@ window.addEventListener('click', function (event) {
     }
 });
 
-// Обработчик отправки формы регистрации (получаем токен)
+
+// *** ИЗМЕНЕНИЕ: Обработчик отправки формы регистрации (получаем токен) ***
 document.addEventListener('submit', async function (e) {
     if (e.target.id === 'register-form') {
         e.preventDefault();
@@ -1077,6 +1169,7 @@ document.addEventListener('submit', async function (e) {
         const password = document.getElementById('register-password').value.trim();
         const confirmPassword = document.getElementById('register-confirm-password').value.trim();
         const registerBtn = document.getElementById('register-btn');
+
         if (!login || !password || !confirmPassword) {
             alert("Пожалуйста, заполните все поля.");
             return;
@@ -1087,27 +1180,35 @@ document.addEventListener('submit', async function (e) {
         }
         registerBtn.disabled = true;
         registerBtn.textContent = "Регистрация...";
+
         try {
             const hashedPassword = await hashPassword(password);
+            
             const response = await fetch('/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ login: login, pass_hash: hashedPassword })
             });
+            
             if (response.ok) {
                 const data = await response.json();
-                // Сразу сохраняем токен и никнейм
+                
+                // *** НОВОЕ: Сразу сохраняем токен и никнейм ***
                 storeCredentials(data.access_token, data.nickname);
+
                 document.getElementById('auth-modal').classList.remove('mandatory');
                 closeRegisterModal();
                 console.log(`Пользователь ${data.nickname} зарегистрирован и вошел.`);
+                
                 // Загружаем чаты (будут пустыми) и создаем новый
                 await loadChats();
                 createNewChat();
+
             } else {
                 const error = await response.json();
                 alert(`Ошибка регистрации: ${error.detail}`);
             }
+
         } catch (error) {
             console.error("Ошибка сети при регистрации:", error);
             alert("Не удалось подключиться к серверу.");
@@ -1118,31 +1219,17 @@ document.addEventListener('submit', async function (e) {
     }
 });
 
-// Обработчики ссылок между модальными окнами без изменений
+// (Обработчики ссылок между модальными окнами без изменений)
 document.addEventListener('click', function (e) {
     if (e.target.id === 'register-link') {
         e.preventDefault();
         openRegisterModal();
     }
 });
-
 document.addEventListener('click', function (e) {
     if (e.target.id === 'back-to-login') {
         e.preventDefault();
         closeRegisterModal();
         openAuthModal();
-    }
-});
-
-// Добавляем обработчик загрузки страницы для проверки авторизации
-window.addEventListener('load', function() {
-    // Если пользователь не авторизован, показываем обязательное окно входа
-    if (!getToken()) {
-        const authModal = document.getElementById('auth-modal');
-        authModal.style.display = 'flex';
-        authModal.classList.add('mandatory');
-        document.getElementById('login-input').focus();
-        // Блокируем доступ к основному интерфейсу
-        document.body.classList.add('auth-required');
     }
 });
