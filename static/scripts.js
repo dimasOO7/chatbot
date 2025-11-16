@@ -46,6 +46,9 @@ function setAuthState(authenticated, nickname = "WIP") {
         userNickname.textContent = "WIP";
         userAvatar.textContent = "A"; // По умолчанию
     }
+
+    // Обновляем мобильную версию
+    updateMobileAuthState();
 }
 
 // --- Функция для открытия окна авторизации ---
@@ -94,6 +97,61 @@ document.addEventListener('DOMContentLoaded', async () => {
     const savedIsAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
     const savedNickname = localStorage.getItem('currentUserNickname') || "WIP";
     setAuthState(savedIsAuthenticated, savedNickname);
+
+    // --- Инициализация состояния сайдбара из localStorage ---
+    const savedState = localStorage.getItem('sidebarCollapsed');
+    if (savedState === 'true') {
+        isSidebarCollapsed = true;
+        document.getElementById('sidebar').classList.add('collapsed');
+        document.getElementById('app-container').classList.add('sidebar-collapsed');
+        document.getElementById('toggle-sidebar-btn').textContent = '←';
+    }
+
+    // --- Обработчик для кнопки гамбургера на мобильных устройствах ---
+    const hamburgerBtn = document.getElementById('hamburger-menu-btn');
+    if (hamburgerBtn) {
+        hamburgerBtn.addEventListener('click', toggleMobileSidebar);
+    }
+
+    // --- Обработчики для мобильных элементов ---
+    const userInputMobile = document.getElementById('userInput-mobile');
+    if (userInputMobile) {
+        userInputMobile.addEventListener('input', autoResizeMobile);
+        userInputMobile.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessageStreamMobile();
+            }
+        });
+    }
+
+    // --- Обработчик клика по кнопке пользователя в мобильном footer ---
+    document.addEventListener('click', function (e) {
+        if (e.target.closest('#user-menu-btn-mobile')) {
+            e.stopPropagation();
+            if (isAuthenticated) {
+                openLogoutModal();
+            } else {
+                openAuthModal();
+            }
+        }
+    });
+
+    // --- Обработчик для поиска в мобильном сайдбаре ---
+    const searchInputMobile = document.getElementById('search-chats-mobile');
+    if (searchInputMobile) {
+        searchInputMobile.addEventListener('input', filterChatsMobile);
+    }
+
+    // --- Обработчик для кнопки "Новый чат" в мобильном сайдбаре ---
+    const newChatBtnMobile = document.getElementById('new-chat-btn-mobile');
+    if (newChatBtnMobile) {
+        newChatBtnMobile.onclick = createNewChat;
+    }
+
+    // --- Обновляем мобильный интерфейс при загрузке ---
+    updateMobileChatsList();
+    updateMobileAuthState();
 });
 
 // --- Загрузка списка чатов с сервера ---
@@ -111,7 +169,7 @@ async function loadChats() {
 
         const data = await response.json();
         chats = data.chats;
-        renderChatsList();
+        renderChatsList(); // Это обновит и ПК, и мобильный список
 
     } catch (e) {
         console.error("Ошибка загрузки чатов:", e);
@@ -171,7 +229,7 @@ function createNewChat() {
         messages: [],
     };
     chats.unshift(newChat);
-    renderChatsList();
+    renderChatsList(); // Это обновит и ПК, и мобильный список
     setCurrentChat(chatId);
     clearFileInput();
 }
@@ -199,7 +257,7 @@ async function setCurrentChat(chatId) {
         if (previousChat.messages && previousChat.messages.length === 0) {
             console.log(`🗑️ Удаление пустого локального чата: ${previousChat.name} (ID: ${previousChat.id})`);
             chats = chats.filter(c => c.id !== currentChatId);
-            renderChatsList();
+            renderChatsList(); // Это обновит и ПК, и мобильный список
         }
     }
 
@@ -236,6 +294,12 @@ async function setCurrentChat(chatId) {
         chat.messages.forEach(msg => {
             addMessageToChat(msg.role, msg.content);
         });
+        // Обновляем мобильную версию
+        const chatDivMobile = document.getElementById('chat-mobile');
+        chatDivMobile.innerHTML = '';
+        chat.messages.forEach(msg => {
+            addMessageToChatMobile(msg.role, msg.content);
+        });
         return;
     }
 
@@ -254,10 +318,18 @@ async function setCurrentChat(chatId) {
         chatHistory.messages.forEach(msg => {
             addMessageToChat(msg.role, msg.content);
         });
+        // Обновляем мобильную версию
+        const chatDivMobile = document.getElementById('chat-mobile');
+        chatDivMobile.innerHTML = '';
+        chatHistory.messages.forEach(msg => {
+            addMessageToChatMobile(msg.role, msg.content);
+        });
 
     } catch (error) {
         console.error("Ошибка загрузки истории чата:", error);
         addMessageToChat('ai', `Не удалось загрузить историю: ${error.message}`);
+        // Обновляем мобильную версию
+        addMessageToChatMobile('ai', `Не удалось загрузить историю: ${error.message}`);
     }
 }
 
@@ -321,11 +393,11 @@ async function sendMessageStream() {
         formData.append('message', message);
         formData.append('user_id', userId);
         formData.append('chat_id', currentChatId);
-        
+
         if (currentFile) {
             formData.append('file', currentFile); // Отправляем сам файл
         }
-        
+
         clearFileInput(); // Очищаем файл *после* добавления в FormData
 
         // *** ИЗМЕНЕНИЕ: Отправляем FormData. Убираем 'Content-Type' (браузер добавит сам) ***
@@ -373,7 +445,7 @@ async function sendMessageStream() {
         isStreaming = false;
         activeFetchController = null;
         disableSidebarActions(false);
-        await loadChats();
+        await loadChats(); // Это обновит и ПК, и мобильный список
         const activeItem = document.querySelector(`.chat-item[data-id="${currentChatId}"]`);
         if (activeItem) activeItem.classList.add('active');
     }
@@ -437,6 +509,9 @@ function renderChatsList() {
 
         list.appendChild(item);
     });
+
+    // Теперь обновляем мобильную версию
+    updateMobileChatsList();
 }
 
 // --- Удаление чата ---
@@ -466,13 +541,14 @@ async function deleteChat(chatId, chatName) {
 
         if (currentChatId === chatId) {
             document.getElementById('chat').innerHTML = '';
+            document.getElementById('chat-mobile').innerHTML = ''; // Очищаем мобильный чат
             if (chats.length > 0) {
                 await setCurrentChat(chats[0].id);
             } else {
                 createNewChat();
             }
         }
-        renderChatsList();
+        renderChatsList(); // Это обновит и ПК, и мобильный список
 
     } catch (error) {
         console.error("Ошибка удаления чата:", error);
@@ -539,6 +615,305 @@ function switchModel(modelName) {
     localStorage.setItem('selected_model', modelName);
 }
 
+
+// --- Функция для открытия окна регистрации ---
+function openRegisterModal() {
+    document.getElementById('auth-modal').style.display = 'none';
+    document.getElementById('register-modal').style.display = 'flex';
+    document.getElementById('register-login').focus();
+}
+
+// --- Функция для закрытия окна регистрации ---
+function closeRegisterModal() {
+    document.getElementById('register-modal').style.display = 'none';
+    document.getElementById('register-form').reset();
+}
+
+
+// --- *** ФУНКЦИИ ДЛЯ СИНХРОНИЗАЦИИ ПК И МОБИЛЬНОЙ ВЕРСИЙ *** ---
+
+// Функция для обновления мобильного списка чатов
+function updateMobileChatsList() {
+    const mobileList = document.getElementById('chats-list-mobile');
+    if (!mobileList) return;
+
+    mobileList.innerHTML = '';
+    if (isStreaming) {
+        mobileList.classList.add('disabled-actions');
+    } else {
+        mobileList.classList.remove('disabled-actions');
+    }
+
+    const search = document.getElementById('search-chats-mobile').value.toLowerCase();
+    const filteredChats = chats.filter(chat =>
+        chat.name.toLowerCase().includes(search)
+    );
+
+    filteredChats.forEach(chat => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.dataset.id = chat.id;
+        if (chat.id === currentChatId) item.classList.add('active');
+        let lastText;
+        if (chat.preview) {
+            lastText = chat.preview.length > 30 ? chat.preview.substring(0, 30) + '...' : chat.preview;
+        } else if (chat.messages && chat.messages.length > 0) {
+            const lastMsg = chat.messages[chat.messages.length - 1];
+            lastText = lastMsg.content.length > 30 ? lastMsg.content.substring(0, 30) + '...' : lastMsg.content;
+        } else {
+            lastText = 'Пустой чат';
+        }
+        item.innerHTML = `
+            <span class="avatar">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+            </span>
+            <div class="chat-info">
+                <div class="chat-name">${chat.name}</div>
+                <div class="chat-preview">${lastText}</div>
+            </div>
+            <span class="delete-chat-btn" title="Удалить чат">🗑️</span>
+        `;
+        item.addEventListener('click', () => {
+            setCurrentChat(chat.id);
+            toggleMobileSidebar(); // Закрываем сайдбар после выбора чата
+        });
+        const deleteBtn = item.querySelector('.delete-chat-btn');
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteChatMobile(chat.id, chat.name);
+        });
+        mobileList.appendChild(item);
+    });
+}
+
+// Функция для обновления состояния авторизации в мобильной версии
+function updateMobileAuthState() {
+    const userMenuBtnMobile = document.getElementById('user-menu-btn-mobile');
+    const userAvatarMobile = document.getElementById('user-avatar-mobile');
+    const userNicknameMobile = document.getElementById('user-nickname-mobile');
+    const logoutIconMobile = document.getElementById('logout-icon-mobile');
+
+    if (isAuthenticated) {
+        userMenuBtnMobile.classList.add('authenticated');
+        userNicknameMobile.textContent = currentUserNickname;
+        if (currentUserNickname && currentUserNickname.length > 0) {
+            userAvatarMobile.textContent = currentUserNickname.charAt(0).toUpperCase();
+        }
+    } else {
+        userMenuBtnMobile.classList.remove('authenticated');
+        userNicknameMobile.textContent = "WIP";
+        userAvatarMobile.textContent = "A";
+    }
+}
+
+// Функция для переключения мобильного сайдбара
+function toggleMobileSidebar() {
+    const sidebar = document.getElementById('sidebar-mobile');
+    sidebar.classList.toggle('open');
+}
+
+// Функция для отправки сообщения из мобильной версии
+async function sendMessageStreamMobile() {
+    if (isStreaming) {
+        console.log("🚫 Уже идет стриминг. Подождите или отмените.");
+        return;
+    }
+    const userInput = document.getElementById('userInput-mobile');
+    const message = userInput.value.trim();
+    if (!message && !currentFile) return;
+
+    let fileName = null;
+    let displayMessage = message;
+    if (currentFile) {
+        fileName = currentFile.name;
+        if (displayMessage) {
+            displayMessage += `\n\n(Прикреплен файл: ${fileName})`;
+        } else {
+            displayMessage = `(Прикреплен файл: ${fileName})`;
+        }
+    }
+
+    // Добавляем сообщение в мобильный чат
+    addMessageToChatMobile('user', displayMessage);
+    userInput.value = '';
+    autoResizeMobile();
+
+    // Файл очистим *после* отправки
+    const currentChat = chats.find(c => c.id === currentChatId);
+    if (!currentChat) return;
+    if (currentChat.messages) {
+        currentChat.messages.push({
+            role: 'user',
+            content: displayMessage,
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    isStreaming = true;
+    activeFetchController = new AbortController();
+    const signal = activeFetchController.signal;
+    disableSidebarActions(true);
+
+    const chatDiv = document.getElementById('chat-mobile');
+    const aiMessageDiv = document.createElement('div');
+    aiMessageDiv.className = 'ai-message';
+    const aiMessageContent = document.createElement('p');
+    aiMessageDiv.innerHTML = '<strong>PNI:</strong> ';
+    aiMessageDiv.appendChild(aiMessageContent);
+    chatDiv.appendChild(aiMessageDiv);
+
+    let fullReply = "";
+    try {
+        const formData = new FormData();
+        formData.append('message', message);
+        formData.append('user_id', userId);
+        formData.append('chat_id', currentChatId);
+        if (currentFile) {
+            formData.append('file', currentFile);
+        }
+        clearFileInputMobile(); // Очищаем файл *после* добавления в FormData
+
+        const response = await fetch('/send_message_stream', {
+            method: 'POST',
+            body: formData,
+            signal: signal
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Ошибка API (${response.status}): ${errText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            fullReply += chunk;
+            aiMessageContent.innerHTML = marked.parse(fullReply);
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+        }
+
+        if (currentChat.messages) {
+            delete currentChat.messages;
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log("Стриминг успешно отменен.");
+            if (aiMessageDiv.parentNode === chatDiv) {
+                chatDiv.removeChild(aiMessageDiv);
+            }
+        } else {
+            console.error('Ошибка стриминга:', error);
+            aiMessageContent.innerHTML = `<strong>Ошибка:</strong> ${error.message}`;
+        }
+    } finally {
+        isStreaming = false;
+        activeFetchController = null;
+        disableSidebarActions(false);
+        await loadChats(); // Это обновит и ПК, и мобильный список
+        updateMobileChatsList();
+        const activeItem = document.querySelector(`.chat-item[data-id="${currentChatId}"]`);
+        if (activeItem) activeItem.classList.add('active');
+    }
+}
+
+// Функция для добавления сообщения в мобильный чат
+function addMessageToChatMobile(role, content) {
+    const chatDiv = document.getElementById('chat-mobile');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = role === 'user' ? 'user-message' : 'ai-message';
+    if (role === 'user') {
+        const textNode = document.createTextNode(content);
+        const p = document.createElement('p');
+        p.appendChild(textNode);
+        p.innerHTML = p.innerHTML.replace(/\n/g, '<br>');
+        const strong = document.createElement('strong');
+        strong.textContent = "Вы: ";
+        messageDiv.appendChild(strong);
+        messageDiv.appendChild(p);
+    } else {
+        const htmlContent = marked.parse(content);
+        messageDiv.innerHTML = `<strong>PNI:</strong> ${htmlContent}`;
+    }
+    chatDiv.appendChild(messageDiv);
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+}
+
+// Функция для авто-растягивания поля ввода в мобильной версии
+function autoResizeMobile() {
+    const userInput = document.getElementById('userInput-mobile');
+    userInput.style.height = 'auto';
+    const maxHeight = 300;
+    userInput.style.height = Math.min(userInput.scrollHeight, maxHeight) + 'px';
+}
+
+// Функция для отображения имени файла в мобильной версии
+function displayFileNameMobile() {
+    const fileInput = document.getElementById('file-upload-mobile');
+    const fileNameDisplay = document.getElementById('file-name-display-mobile');
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        currentFile = file;
+        fileNameDisplay.textContent = `Файл: ${file.name}`;
+    } else {
+        currentFile = null;
+        fileNameDisplay.textContent = '';
+    }
+}
+
+// Функция для поиска чатов в мобильной версии
+function filterChatsMobile() {
+    updateMobileChatsList();
+}
+
+// Функция для сброса прикрепленного файла в мобильной версии
+function clearFileInputMobile() {
+    document.getElementById('file-upload-mobile').value = null;
+    document.getElementById('file-name-display-mobile').textContent = '';
+    currentFile = null;
+}
+
+// Функция для удаления чата в мобильной версии
+async function deleteChatMobile(chatId, chatName) {
+    if (isStreaming) {
+        alert("Нельзя удалить чат во время генерации ответа.");
+        return;
+    }
+    if (!confirm(`Вы уверены, что хотите удалить чат "${chatName}"?`)) {
+        return;
+    }
+    try {
+        const response = await fetch('/delete_chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, chat_id: chatId })
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Не удалось удалить чат');
+        }
+        chats = chats.filter(c => c.id !== chatId);
+        if (currentChatId === chatId) {
+            document.getElementById('chat-mobile').innerHTML = '';
+            if (chats.length > 0) {
+                await setCurrentChat(chats[0].id);
+            } else {
+                createNewChat();
+            }
+        }
+        updateMobileChatsList();
+    } catch (error) {
+        console.error("Ошибка удаления чата:", error);
+        alert(`Ошибка: ${error.message}`);
+    }
+}
+
+
 // --- Обработчики событий ---
 const userInput = document.getElementById('userInput');
 userInput.addEventListener('input', autoResize);
@@ -546,17 +921,6 @@ userInput.addEventListener('keypress', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessageStream();
-    }
-});
-
-// --- Инициализация состояния сайдбара из localStorage ---
-document.addEventListener('DOMContentLoaded', () => {
-    const savedState = localStorage.getItem('sidebarCollapsed');
-    if (savedState === 'true') {
-        isSidebarCollapsed = true;
-        document.getElementById('sidebar').classList.add('collapsed');
-        document.getElementById('app-container').classList.add('sidebar-collapsed');
-        document.getElementById('toggle-sidebar-btn').textContent = '←';
     }
 });
 
@@ -605,7 +969,7 @@ document.addEventListener('click', function (e) {
         alert("Функция восстановления пароля пока не реализована.");
     } else if (e.target.id === 'register-link') {
         e.preventDefault();
-        alert("Функция регистрации пока не реализована.");
+
     }
 });
 
@@ -628,5 +992,70 @@ window.addEventListener('click', function (event) {
     }
     if (event.target === logoutModal) {
         closeLogoutModal();
+    }
+});
+
+
+// --- Обработчик отправки формы регистрации ---
+document.addEventListener('submit', function (e) {
+    if (e.target.id === 'register-form') {
+        e.preventDefault();
+        const login = document.getElementById('register-login').value.trim();
+        const password = document.getElementById('register-password').value.trim();
+        const confirmPassword = document.getElementById('register-confirm-password').value.trim();
+
+        // Простая валидация
+        if (!login || !password || !confirmPassword) {
+            alert("Пожалуйста, заполните все поля.");
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            alert("Пароли не совпадают.");
+            return;
+        }
+
+        // Имитация успешной регистрации (замените на реальный запрос к API)
+        setAuthState(true, login);
+        localStorage.setItem('isAuthenticated', 'true');
+        localStorage.setItem('currentUserNickname', login);
+        closeRegisterModal();
+        console.log(`Пользователь ${login} зарегистрирован и вошел.`);
+    }
+});
+
+// --- Обработчики для перехода между окнами ---
+
+// Обработчик клика по ссылке "Зарегистрироваться" в окне входа
+document.addEventListener('click', function (e) {
+    if (e.target.id === 'register-link') {
+        e.preventDefault();
+        openRegisterModal();
+    }
+});
+
+// Обработчик клика по ссылке "Уже есть аккаунт? Войти" в окне регистрации
+document.addEventListener('click', function (e) {
+    if (e.target.id === 'back-to-login') {
+        e.preventDefault();
+        closeRegisterModal();
+        openAuthModal();
+    }
+});
+
+// Обработчик клика по фону модального окна (обновленный)
+window.addEventListener('click', function (event) {
+    const authModal = document.getElementById('auth-modal');
+    const logoutModal = document.getElementById('logout-modal');
+    const registerModal = document.getElementById('register-modal');
+
+    if (event.target === authModal) {
+        closeAuthModal();
+    }
+    if (event.target === logoutModal) {
+        closeLogoutModal();
+    }
+    if (event.target === registerModal) {
+        closeRegisterModal();
     }
 });

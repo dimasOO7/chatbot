@@ -41,11 +41,7 @@ body {
     z-index: 10000;
 }
 
-@media (max-width: 768px) {
-    #app-container {
-        border-radius: 0px;
-    }
-}
+
 
 
 /* --- Стили боковой панели (список чатов) --- */
@@ -73,7 +69,8 @@ body {
         color: #6b62fe; /* фиолетовый акцент */
         margin-right: 10px;
     }
-#PNI-part-one{
+
+#PNI-part-one {
     font-size: 2rem;
 }
 /* --- Обёртка для сайдбара и кнопки --- */
@@ -142,17 +139,7 @@ body {
     z-index: 5; /* Чтобы не перекрывалась кнопкой */
 }
 
-/* --- Адаптивность: на мобильных не сворачиваем --- */
-@media (max-width: 768px) {
-    #toggle-sidebar-btn {
-        display: none;
-    }
 
-    #sidebar {
-        width: 100%;
-        max-height: 300px;
-    }
-}
 
 
 
@@ -198,12 +185,9 @@ body {
     position: relative;
     margin-bottom: 5px;
 }
-@media (max-width: 768px) {
-    .search-box {
-        position: relative;
-        margin-bottom: -5px;
-    }
-}
+
+
+
 #search-chats {
     width: 100%;
     padding: 10px 35px 10px 15px; /* отступ справа под иконку */
@@ -299,6 +283,7 @@ body {
         padding: 0;
         flex-shrink: 0;
     }
+
         .chat-item .avatar svg {
             /* Наследуем цвет от родителя (.avatar) */
             /* stroke: currentColor; — это уже по умолчанию */
@@ -534,27 +519,7 @@ body {
         background-color: #e69d3d;
     }
 
-/* --- Адаптивность для мобильных --- */
-@media (max-width: 768px) {
-    #app-container {
-        flex-direction: column; /* сайдбар сверху */
-        height: auto;
-    }
 
-    #sidebar {
-        width: 100%;
-        max-height: 300px;
-    }
-
-    #main-chat {
-        padding: 15px;
-    }
-
-    /* *** ИЗМЕНЕНИЕ: На мобильных имя файла под полем ввода *** */
-    #file-name-display {
-        margin-left: 10px;
-    }
-}
 
 /* --- Фоновое видео --- */
 #bg-video {
@@ -570,11 +535,7 @@ body {
 }
 
 /* Дополнительная настройка для мобильных */
-@media (max-width: 768px) {
-    #bg-video {
-        object-position: center; /* центрирование видео */
-    }
-}
+
 
 /* Полупрозрачный чёрный слой поверх видео для лучшей читаемости */
 body::before {
@@ -764,8 +725,118 @@ body::before {
         color: #aaa;
     }
 
-/* --- СТИЛИ ДЛЯ МОДАЛЬНОГО ОКНА ВЫХОДА --- */
+/* --- СТИЛИ ДЛЯ МОДАЛЬНЫХ ОКОН АВТОРИЗАЦИИ И РЕГИСТРАЦИИ --- */
 
+/* Общие стили для модальных окон */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background: #1e1e2e;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    width: 350px;
+    max-width: 90%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 20px; /* Увеличен отступ между элементами */
+}
+
+    .modal-content h2 {
+        font-family: 'Krona One', sans-serif;
+        font-size: 2rem;
+        color: #6b62fe;
+        margin-bottom: 15px; /* Уменьшен отступ */
+    }
+
+    /* Стили для форм (вход/регистрация) */
+    .modal-content form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    /* Стили для полей ввода */
+    .modal-content input {
+        width: 100%;
+        padding: 12px 15px;
+        border: none;
+        border-radius: 20px;
+        background: #2d2d3f;
+        color: white;
+        outline: none;
+        font-size: 14px;
+        transition: background 0.2s;
+    }
+
+        .modal-content input:focus {
+            background: #33334f;
+        }
+
+    /* Стили для кнопок отправки */
+    .modal-content button[type="submit"] {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 20px;
+        background: #6c63ff;
+        color: white;
+        font-weight: bold;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background 0.2s;
+    }
+
+        .modal-content button[type="submit"]:hover {
+            background: #5a52e0;
+        }
+
+/* Стили для ссылок внутри модальных окон */
+.auth-links {
+    display: flex;
+    justify-content: center;
+    margin-top: 15px;
+    font-size: 14px;
+}
+
+    .auth-links a {
+        color: #6c63ff;
+        text-decoration: none;
+        transition: color 0.2s;
+    }
+
+        .auth-links a:hover {
+            color: #5a52e0;
+            text-decoration: underline;
+        }
+
+    .auth-links span {
+        color: #aaa;
+    }
+
+/* --- СТИЛИ ДЛЯ ОКНА ВХОДА --- */
+#auth-modal .modal-content {
+    /* Специфичные стили для окна входа можно добавить здесь, если нужно */
+}
+
+/* --- СТИЛИ ДЛЯ ОКНА РЕГИСТРАЦИИ --- */
+#register-modal .modal-content {
+    /* Специфичные стили для окна регистрации можно добавить здесь, если нужно */
+}
+
+/* --- СТИЛИ ДЛЯ МОДАЛЬНОГО ОКНА ВЫХОДА --- */
 #logout-modal .modal-content {
     width: 300px;
     padding: 25px;
@@ -813,3 +884,266 @@ body::before {
             #logout-modal .modal-buttons button:last-child:hover {
                 background: #6A5ACD;
             }
+
+
+
+
+
+
+/* --- МОБИЛЬНАЯ ВЕРСИЯ (ЭКРАНЫ <= 768px) --- */
+@media (max-width: 768px) {
+
+    /* --- ОБЩИЕ НАСТРОЙКИ --- */
+    #app-container {
+        flex-direction: column;
+        height: auto;
+        border-radius: 0;
+        margin-top: 0;
+        margin-bottom: 0;
+    }
+
+    /* Убираем лишние отступы у контейнера */
+    #app-content {
+        padding: 0;
+        border-radius: 0;
+    }
+
+    /* --- СКРЫВАЕМ ПК ЭЛЕМЕНТЫ --- */
+    #sidebar-wrapper,
+    #main-chat {
+        display: none;
+    }
+
+    /* --- ПОКАЗЫВАЕМ МОБИЛЬНЫЕ ЭЛЕМЕНТЫ --- */
+    #sidebar-mobile,
+    #main-chat-mobile {
+        display: flex;
+    }
+
+    /* --- СТИЛИ ДЛЯ МОБИЛЬНОГО САЙДБАРА --- */
+    #sidebar-mobile {
+        width: 100%;
+        max-height: 300px;
+        background-color: #181825;
+        padding: 20px 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        overflow-y: auto;
+        position: fixed; /* Фиксируем вверху */
+        top: 0;
+        left: 0;
+        z-index: 9998; /* Ниже модальных окон, но выше чата */
+        transform: translateY(-100%); /* Скрываем за верхней границей */
+        transition: transform 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+        /* Сайдбар открыт */
+        #sidebar-mobile.open {
+            transform: translateY(0);
+        }
+
+    /* --- СТИЛИ ДЛЯ МОБИЛЬНОГО ОСНОВНОГО КОНТЕНТА --- */
+    #main-chat-mobile {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 15px;
+        background-color: #1e1e2e;
+        overflow: hidden;
+        position: relative; /* Для позиционирования гамбургера */
+        z-index: 9997; /* Ниже сайдбара */
+        height: calc(100vh - 100px); /* Высота без хедера и футера */
+    }
+
+    /* --- КНОПКА ГАМБУРГЕР --- */
+    #hamburger-menu-btn {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        width: 40px;
+        height: 40px;
+        background: #181825;
+        border: 2px solid #6c63ff;
+        color: white;
+        font-size: 18px;
+        cursor: pointer;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+
+        #hamburger-menu-btn:hover {
+            background: #6c63ff;
+            color: white;
+        }
+
+    /* --- АДАПТИВНОСТЬ ЭЛЕМЕНТОВ ВНУТРИ САЙДБАРА --- */
+    #sidebar-mobile .sidebar-header h2 {
+        font-size: 1.6rem;
+    }
+
+    #sidebar-mobile .search-box {
+        margin-bottom: 5px;
+    }
+
+    #sidebar-mobile #search-chats {
+        padding: 8px 35px 8px 15px;
+        font-size: 13px;
+    }
+
+    #sidebar-mobile .search-icon svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    #sidebar-mobile #chats-list {
+        flex: 1;
+    }
+
+    #sidebar-mobile .chat-item {
+        padding: 10px 12px;
+        font-size: 13px;
+        gap: 8px;
+    }
+
+        #sidebar-mobile .chat-item .avatar {
+            width: 20px;
+            height: 20px;
+        }
+
+    #sidebar-mobile .chat-info .chat-name {
+        font-weight: bold;
+        margin-bottom: 2px;
+    }
+
+    #sidebar-mobile .chat-info .chat-preview {
+        font-size: 11px;
+        line-height: 1.2;
+    }
+
+    #sidebar-mobile .sidebar-footer {
+        padding-top: 15px;
+        margin-top: auto;
+    }
+
+    #sidebar-mobile .user-info {
+        gap: 8px;
+        font-size: 13px;
+    }
+
+        #sidebar-mobile .user-info .avatar {
+            width: 25px;
+            height: 25px;
+            font-size: 12px;
+        }
+
+        #sidebar-mobile .user-info #user-nickname {
+            font-size: 13px;
+        }
+
+    /* --- АДАПТИВНОСТЬ ЭЛЕМЕНТОВ ВНУТРИ ОСНОВНОГО КОНТЕНТА --- */
+    #main-chat-mobile #chat {
+        margin-top: 10px;
+        padding: 15px;
+        border-radius: 12px;
+        min-height: 0;
+    }
+
+    #main-chat-mobile .user-message,
+    #main-chat-mobile .ai-message {
+        max-width: 85%;
+        padding: 8px 12px;
+        font-size: 15px;
+    }
+
+    #main-chat-mobile #user-message-and-send {
+        gap: 8px;
+    }
+
+    #main-chat-mobile #userInput {
+        padding: 10px 12px;
+        font-size: 15px;
+        min-height: 40px;
+    }
+
+    #main-chat-mobile #send-message {
+        width: 45px;
+        height: 40px;
+        padding: 10px;
+        font-size: 16px;
+    }
+
+    #main-chat-mobile #file-upload-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 18px;
+    }
+
+    #main-chat-mobile #file-name-display {
+        margin-left: 10px;
+        font-size: 11px;
+        height: 15px;
+    }
+
+    /* --- СТИЛИ ДЛЯ МОДАЛЬНЫХ ОКНОВ НА МОБИЛЬНЫХ --- */
+    .modal-content {
+        width: 300px;
+        padding: 25px;
+    }
+
+        .modal-content h2 {
+            font-size: 1.8rem;
+        }
+
+        .modal-content input {
+            font-size: 13px;
+            padding: 10px 12px;
+        }
+
+        .modal-content button[type="submit"] {
+            font-size: 15px;
+            padding: 10px;
+        }
+
+    .auth-links {
+        font-size: 13px;
+    }
+
+    #logout-modal .modal-content {
+        width: 280px;
+        padding: 20px;
+    }
+
+        #logout-modal .modal-content h3 {
+            font-size: 1.4rem;
+        }
+
+        #logout-modal .modal-content p {
+            font-size: 14px;
+        }
+
+    #logout-modal .modal-buttons button {
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+}
+
+/* --- СТИЛИ ДЛЯ ПК ВЕРСИИ (по умолчанию) --- */
+#sidebar-wrapper {
+    display: flex;
+}
+
+#main-chat {
+    display: flex;
+}
+
+#sidebar-mobile,
+#main-chat-mobile {
+    display: none;
+}

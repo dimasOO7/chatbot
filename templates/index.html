@@ -23,10 +23,12 @@
 
     <div id="app-container">
 
+        <!-- *** КНОПКА СВОРАЧИВАНИЯ ДЛЯ ПК ВЕРСИИ *** -->
         <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
         <div id="app-content">
 
+            <!-- *** БОКОВАЯ ПАНЕЛЬ ДЛЯ ПК ВЕРСИИ (по умолчанию) *** -->
             <div id="sidebar-wrapper">
                 <aside id="sidebar">
                     <div class="sidebar-header">
@@ -61,11 +63,12 @@
                 </aside>
             </div>
 
+            <!-- *** ОСНОВНОЕ ОКНО ЧАТА ДЛЯ ПК ВЕРСИИ (по умолчанию) *** -->
             <main id="main-chat">
                 <div id="chat"></div>
                 <div class="input-area-container">
                     <div id="user-message-and-send">
-<label for="file-upload" id="file-upload-btn" title="Прикрепить файл (.txt, .pdf, .docx, .xlsx...)">📎</label>
+                        <label for="file-upload" id="file-upload-btn" title="Прикрепить файл (.txt, .pdf, .docx, .xlsx...)">📎</label>
                         <input type="file" id="file-upload" accept=".txt,.csv,.xlsx,.docx,.pdf,.html,text/plain,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,text/html" onchange="displayFileName()">
                         <textarea id="userInput" placeholder="Введите ваш вопрос..." rows="2"></textarea>
                         <button onclick="sendMessageStream()" id="send-message">→</button>
@@ -74,6 +77,59 @@
                 </div>
             </main>
 
+            <!-- *** МОБИЛЬНЫЙ САЙДБАР (скрыт по умолчанию) *** -->
+            <aside id="sidebar-mobile">
+                <div class="sidebar-header">
+                    <h2>PNIchat</h2>
+                    <button id="new-chat-btn-mobile" onclick="createNewChat()">
+                        <i class="fas fa-comment-dots"></i>
+                        <span class="plus">+</span>
+                    </button>
+                </div>
+
+                <div class="search-box">
+                    <input type="text" id="search-chats-mobile" placeholder="Поиск в чатах" oninput="filterChatsMobile()">
+                    <span class="search-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    </span>
+                </div>
+
+                <div id="chats-list-mobile"></div>
+
+                <div class="sidebar-footer">
+                    <div class="user-info">
+                        <button id="user-menu-btn-mobile" title="Профиль и выход">
+                            <span class="avatar" id="user-avatar-mobile">A</span>
+                            <span id="user-nickname-mobile">WIP</span>
+                            <i class="fas fa-sign-out-alt" id="logout-icon-mobile"></i>
+                        </button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- *** МОБИЛЬНОЕ ОКНО ЧАТА (скрыто по умолчанию) *** -->
+            <main id="main-chat-mobile">
+                <!-- *** КНОПКА ГАМБУРГЕР ДЛЯ ОТКРЫТИЯ САЙДБАРА *** -->
+                <button id="hamburger-menu-btn" title="Открыть меню">
+                    <i class="fas fa-bars"></i>
+                </button>
+
+                <div id="chat-mobile"></div>
+                <div class="input-area-container">
+                    <div id="user-message-and-send-mobile">
+                        <label for="file-upload-mobile" id="file-upload-btn-mobile" title="Прикрепить файл (.txt, .pdf, .docx, .xlsx...)">📎</label>
+                        <input type="file" id="file-upload-mobile" accept=".txt,.csv,.xlsx,.docx,.pdf,.html,text/plain,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,text/html" onchange="displayFileNameMobile()">
+                        <textarea id="userInput-mobile" placeholder="Введите ваш вопрос..." rows="2"></textarea>
+                        <button onclick="sendMessageStreamMobile()" id="send-message-mobile">→</button>
+                    </div>
+                    <div id="file-name-display-mobile"></div>
+                </div>
+            </main>
+
+            <!-- --- МОДАЛЬНЫЕ ОКНА (ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ) --- -->
             <div id="auth-modal" class="modal">
                 <div class="modal-content">
                     <h2>PNIchat</h2>
@@ -90,6 +146,21 @@
                 </div>
             </div>
 
+            <div id="register-modal" class="modal">
+                <div class="modal-content">
+                    <h2>PNIchat</h2>
+                    <form id="register-form">
+                        <input type="text" id="register-login" placeholder="Логин" required>
+                        <input type="password" id="register-password" placeholder="Пароль" required>
+                        <input type="password" id="register-confirm-password" placeholder="Повторите пароль" required>
+                        <button type="submit" id="register-btn">Зарегистрироваться</button>
+                    </form>
+                    <div class="auth-links">
+                        <a href="#" id="back-to-login">Уже есть аккаунт? Войти</a>
+                    </div>
+                </div>
+            </div>
+
             <div id="logout-modal" class="modal">
                 <div class="modal-content">
                     <h3>Выход</h3>
@@ -101,23 +172,8 @@
                 </div>
             </div>
 
-
-
-        </div> </div> <script src="/static/scripts.js"></script>
+        </div>
+    </div>
+    <script src="/static/scripts.js"></script>
 </body>
 </html>
-
-
-<!-- -->
-<!-- -->
-<!-- -->
-<!-- -->
-<!-- -->
-<!-- -->
-<!-- -->
-<!--ВАЖНОООООО в СТРОКЕ 595 ФАЙЛА СО СКРИПТАМИ ИДЕТ ТОЛЬКО ИМИТАЦИЯ АВТОРИЗАЦИИ!!!! 
-    ЕЕ НАДО БУДЕТ ЗАМЕНИТЬ 
-    
-    
-    
-    -->
