@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # 1. Сервис вашего FastAPI приложения
+  app:
+    build: .
+    container_name: cerebras_fastapi_app
+    restart: always
+    env_file:
+      - .env
+    # Внутренняя сеть, порт 8000 прослушивается внутри сети Docker
+    expose:
+      - "8000"
+    volumes:
+      # Сохраняем базу данных и статические файлы
+      - ./database.db:/app/database.db
+      - ./static:/app/static 
+
+  # 2. Сервис Nginx (обратный прокси)
+  nginx:
+    image: nginx:1.25.3-alpine
+    container_name: cerebras_nginx
+    restart: always
+    ports:
+      # Наружу: 80 для Certbot, 8000 для HTTPS-трафика
+      - "80:80"
+      - "8000:8000"
+    volumes:
+      # Конфигурация Nginx
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      # SSL-сертификаты (для Certbot)
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - app
+
+  # 3. Сервис Certbot (для автоматического получения SSL-сертификата)
+  certbot:
+    image: certbot/certbot
+    container_name: cerebras_certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    # Команда запуска, которая будет просто ждать
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 6h & wait $!; done;'"

@@ -1,2 +1,73 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-*
+# IDEs and Editors
+# -------------------------
+# PyCharm
+.idea/
+# VS Code
+.vscode/
+
+# Byte-compiled / Optimized files
+# -------------------------
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# C extensions
+# -------------------------
+*.so
+
+# Distribution / Build files
+# -------------------------
+dist/
+build/
+*.egg
+*.whl
+
+# Virtual Environment
+# -------------------------
+# Стандартное имя виртуального окружения
+venv/
+env/
+# Для использования Poetry
+.venv/
+
+# Dependencies
+# -------------------------
+# Загруженные пакеты (например, pip)
+.Python
+pip-wheel-metadata/
+
+# OS-specific files
+# -------------------------
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+# -------------------------
+*.log
+*.sqlite3
+
+# Test files
+# -------------------------
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Jupyter Notebook files
+# -------------------------
+.ipynb_checkpoints
+
+# Miscellaneous
+# -------------------------
+# Файлы конфигурации, содержащие секреты или специфичные для окружения настройки
+# (замените `config.ini` или `settings.py` на фактические имена ваших файлов)
+config.ini
+settings.py
+local_settings.py
+*.db
+bin/
+data/
+include/
+lib/
+lib64/
+.env
