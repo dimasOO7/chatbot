@@ -705,7 +705,8 @@ body::before {
 
 .auth-links {
     display: flex;
-    justify-content: space-between;
+    /* *** ИЗМЕНЕНИЕ: Было space-between, стало center *** */
+    justify-content: center;
     margin-top: 15px;
     font-size: 14px;
 }

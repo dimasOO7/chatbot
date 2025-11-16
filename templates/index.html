@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -13,22 +14,21 @@
     <link rel="stylesheet" href="/static/styles.css" />
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <link rel="icon" type="image/png" href="/static/favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/static/favicon/favicon.svg" />
+    <link rel="shortcut icon" href="/static/favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png" />
+    <link rel="manifest" href="/static/favicon/site.webmanifest" />
 </head>
 
 <body>
-    <video autoplay muted loop playsinline id="bg-video">
-        <source src="/static/background.mp4" type="video/mp4">
-        Ваш браузер не поддерживает видео.
-    </video>
-
     <div id="app-container">
 
-        <!-- *** КНОПКА СВОРАЧИВАНИЯ ДЛЯ ПК ВЕРСИИ *** -->
         <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
         <div id="app-content">
 
-            <!-- *** БОКОВАЯ ПАНЕЛЬ ДЛЯ ПК ВЕРСИИ (по умолчанию) *** -->
             <div id="sidebar-wrapper">
                 <aside id="sidebar">
                     <div class="sidebar-header">
@@ -63,7 +63,6 @@
                 </aside>
             </div>
 
-            <!-- *** ОСНОВНОЕ ОКНО ЧАТА ДЛЯ ПК ВЕРСИИ (по умолчанию) *** -->
             <main id="main-chat">
                 <div id="chat"></div>
                 <div class="input-area-container">
@@ -77,7 +76,6 @@
                 </div>
             </main>
 
-            <!-- *** МОБИЛЬНЫЙ САЙДБАР (скрыт по умолчанию) *** -->
             <aside id="sidebar-mobile">
                 <div class="sidebar-header">
                     <h2>PNIchat</h2>
@@ -110,9 +108,7 @@
                 </div>
             </aside>
 
-            <!-- *** МОБИЛЬНОЕ ОКНО ЧАТА (скрыто по умолчанию) *** -->
             <main id="main-chat-mobile">
-                <!-- *** КНОПКА ГАМБУРГЕР ДЛЯ ОТКРЫТИЯ САЙДБАРА *** -->
                 <button id="hamburger-menu-btn" title="Открыть меню">
                     <i class="fas fa-bars"></i>
                 </button>
@@ -129,7 +125,6 @@
                 </div>
             </main>
 
-            <!-- --- МОДАЛЬНЫЕ ОКНА (ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ) --- -->
             <div id="auth-modal" class="modal">
                 <div class="modal-content">
                     <h2>PNIchat</h2>
@@ -139,8 +134,6 @@
                         <button type="submit" id="login-btn">Войти</button>
                     </form>
                     <div class="auth-links">
-                        <a href="#" id="forgot-password">Забыли пароль?</a>
-                        <span>или</span>
                         <a href="#" id="register-link">Зарегистрироваться</a>
                     </div>
                 </div>
