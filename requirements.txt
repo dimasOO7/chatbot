@@ -4,7 +4,7 @@ openai
 python-dotenv
 uvicorn
 aiosqlite
-pypdf
+pandas
 python-multipart
 AsyncDDGS
 beautifulsoup4
