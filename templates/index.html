@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -12,19 +11,18 @@
     <title>PNIbot</title>
 
     <link rel="stylesheet" href="/static/styles.css" />
-
+    
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
-    <link rel="icon" type="image/png" href="/static/favicon/favicon-96x96.png" sizes="96x96" />
-    <link rel="icon" type="image/svg+xml" href="/static/favicon/favicon.svg" />
-    <link rel="shortcut icon" href="/static/favicon/favicon.ico" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon/apple-touch-icon.png" />
-    <link rel="manifest" href="/static/favicon/site.webmanifest" />
 </head>
 
 <body>
-    <div id="app-container">
+    <video autoplay muted loop playsinline id="bg-video">
+        <source src="/static/background.mp4" type="video/mp4">
+        Ваш браузер не поддерживает видео.
+    </video>
 
+    <div id="app-container" style="display: none;">
+        
         <button id="toggle-sidebar-btn" title="Свернуть/развернуть боковую панель">→</button>
 
         <div id="app-content">
@@ -42,7 +40,7 @@
                     <div class="search-box">
                         <input type="text" id="search-chats" placeholder="Поиск в чатах" oninput="filterChats()">
                         <span class="search-icon">
-                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.g/2000/svg">
                                 <circle cx="11" cy="11" r="8" />
                                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
                             </svg>
@@ -78,26 +76,6 @@
 
             <aside id="sidebar-mobile">
                 <div class="sidebar-header">
-                    <h2>PNIchat</h2>
-                    <button id="new-chat-btn-mobile" onclick="createNewChat()">
-                        <i class="fas fa-comment-dots"></i>
-                        <span class="plus">+</span>
-                    </button>
-                </div>
-
-                <div class="search-box">
-                    <input type="text" id="search-chats-mobile" placeholder="Поиск в чатах" oninput="filterChatsMobile()">
-                    <span class="search-icon">
-                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="11" cy="11" r="8" />
-                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                        </svg>
-                    </span>
-                </div>
-
-                <div id="chats-list-mobile"></div>
-
-                <div class="sidebar-footer">
                     <div class="user-info">
                         <button id="user-menu-btn-mobile" title="Профиль и выход">
                             <span class="avatar" id="user-avatar-mobile">A</span>
@@ -105,18 +83,36 @@
                             <i class="fas fa-sign-out-alt" id="logout-icon-mobile"></i>
                         </button>
                     </div>
+                    <button id="new-chat-btn-mobile" onclick="createNewChat()">
+                        <i class="fas fa-comment-dots"></i>
+                        <span class="plus">+</span>
+                    </button>
+                    <button id="close-sidebar-btn-mobile">←</button>
                 </div>
+                <div class="search-box">
+                    <input type="text" id="search-chats-mobile" placeholder="Поиск в чатах" oninput="filterChatsMobile()">
+                    <span class="search-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.g/2000/svg">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    </span>
+                </div>
+                <div id="chats-list-mobile"></div>
             </aside>
 
             <main id="main-chat-mobile">
-                <button id="hamburger-menu-btn" title="Открыть меню">
-                    <i class="fas fa-bars"></i>
-                </button>
-
+                <div class="chat-header">
+                    <button id="hamburger-menu-btn" title="Меню">☰</button>
+                    <div class="chat-name-mobile">
+                        <span id="mobile-chat-title">Новый чат</span>
+                        <button id="mobile-new-chat-btn" onclick="createNewChat()" title="Новый чат">+</button>
+                    </div>
+                </div>
                 <div id="chat-mobile"></div>
                 <div class="input-area-container">
                     <div id="user-message-and-send-mobile">
-                        <label for="file-upload-mobile" id="file-upload-btn-mobile" title="Прикрепить файл (.txt, .pdf, .docx, .xlsx...)">📎</label>
+                        <label for="file-upload-mobile" id="file-upload-btn-mobile" title="Прикрепить файл">📎</label>
                         <input type="file" id="file-upload-mobile" accept=".txt,.csv,.xlsx,.docx,.pdf,.html,text/plain,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,text/html" onchange="displayFileNameMobile()">
                         <textarea id="userInput-mobile" placeholder="Введите ваш вопрос..." rows="2"></textarea>
                         <button onclick="sendMessageStreamMobile()" id="send-message-mobile">→</button>
@@ -124,49 +120,51 @@
                     <div id="file-name-display-mobile"></div>
                 </div>
             </main>
-
-            <div id="auth-modal" class="modal">
-                <div class="modal-content">
-                    <h2>PNIchat</h2>
-                    <form id="login-form">
-                        <input type="text" id="login-input" placeholder="Логин" required>
-                        <input type="password" id="password-input" placeholder="Пароль" required>
-                        <button type="submit" id="login-btn">Войти</button>
-                    </form>
-                    <div class="auth-links">
-                        <a href="#" id="register-link">Зарегистрироваться</a>
-                    </div>
-                </div>
-            </div>
-
-            <div id="register-modal" class="modal">
-                <div class="modal-content">
-                    <h2>PNIchat</h2>
-                    <form id="register-form">
-                        <input type="text" id="register-login" placeholder="Логин" required>
-                        <input type="password" id="register-password" placeholder="Пароль" required>
-                        <input type="password" id="register-confirm-password" placeholder="Повторите пароль" required>
-                        <button type="submit" id="register-btn">Зарегистрироваться</button>
-                    </form>
-                    <div class="auth-links">
-                        <a href="#" id="back-to-login">Уже есть аккаунт? Войти</a>
-                    </div>
-                </div>
-            </div>
-
-            <div id="logout-modal" class="modal">
-                <div class="modal-content">
-                    <h3>Выход</h3>
-                    <p>Вы уверены, что хотите выйти?</p>
-                    <div class="modal-buttons">
-                        <button id="confirm-logout">Да</button>
-                        <button id="cancel-logout">Нет</button>
-                    </div>
-                </div>
-            </div>
-
         </div>
     </div>
+    
+    <div id="auth-modal" class="modal">
+        <div class="modal-content">
+            <h2>PNIchat</h2>
+            <form id="login-form">
+                <input type="text" id="login-input" placeholder="Логин" required>
+                <input type="password" id="password-input" placeholder="Пароль" required>
+                <button type="submit" id="login-btn">Войти</button>
+            </form>
+            <div class="auth-links">
+                <a href="#" id="register-link">Зарегистрироваться</a>
+            </div>
+            <div id="login-error" class="auth-error"></div>
+        </div>
+    </div>
+
+    <div id="register-modal" class="modal">
+        <div class="modal-content">
+            <h2>PNIchat</h2>
+            <form id="register-form">
+                <input type="text" id="register-login" placeholder="Логин" required>
+                <input type="password" id="register-password" placeholder="Пароль" required>
+                <input type="password" id="register-confirm-password" placeholder="Повторите пароль" required>
+                <button type="submit" id="register-btn">Зарегистрироваться</button>
+            </form>
+            <div class="auth-links">
+                <a href="#" id="back-to-login">Уже есть аккаунт? Войти</a>
+            </div>
+            <div id="register-error" class="auth-error"></div>
+        </div>
+    </div>
+
+    <div id="logout-modal" class="modal">
+        <div class="modal-content">
+            <h3>Выход</h3>
+            <p>Вы уверены, что хотите выйти?</p>
+            <div class="modal-buttons">
+                <button id="confirm-logout">Да</button>
+                <button id="cancel-logout">Нет</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="/static/scripts.js"></script>
 </body>
 </html>

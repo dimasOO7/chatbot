@@ -1,8 +1,8 @@
-# *** ИЗМЕНЕНИЕ: Новые импорты для JWT, OAuth2, Pydantic, Hashing ***
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Depends
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
-from openai import OpenAI
+# --- ИЗМЕНЕНИЕ: Используем АСИНХРОННЫЙ клиент OpenAI ---
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import os
 import uvicorn
@@ -24,10 +24,14 @@ import docx
 from pypdf import PdfReader
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-# --- Новые импорты для Аутентификации ---
-from fastapi.security import OAuth2PasswordBearer
+# --- Новые импорты для безопасности ---
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+
+ph = PasswordHasher()
 
 # --- Regex для deteksi URL ---
 URL_REGEX = re.compile(r'https://[\w\.-]+[/\w\.-]*')
@@ -37,11 +41,13 @@ SHEET_RE = re.compile(r"/spreadsheets/d/([\w-]+)")
 # --- Загрузка переменных окружения ---
 load_dotenv()
 
+# --- Конфигурация API-ключей ---
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
 if not CEREBRAS_API_KEY:
     raise ValueError("Переменная окружения CEREBRAS_API_KEY не установлена.")
 
-client = OpenAI(
+# --- ИЗМЕНЕНИЕ: Инициализируем AsyncOpenAI ---
+client = AsyncOpenAI(
     api_key=CEREBRAS_API_KEY,
     base_url="https://api.cerebras.ai/v1"
 )
@@ -49,16 +55,10 @@ client = OpenAI(
 CLASSIFY_MODEL_ID = "llama-3.3-70b"
 GENERATE_MODEL_ID = "gpt-oss-120b"
 
-# *** ИЗМЕНЕНИЕ: Настройки безопасности JWT ***
-# Создайте свой 'openssl rand -hex 32'
-SECRET_KEY = os.environ.get("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 день
-
 # --- Инициализация приложения ---
 app = FastAPI(
-    title="API чата Cerebras (JWT Auth)",
-    description="Асинхронный чат с JWT аутентификацией, историей, авто-классификацией и поиском.",
+    title="API чата Cerebras (Async SQLite + Поиск + Auth)",
+    description="Асинхронный чат с историей, авто-классификацией, поиском DuckDuckGo и JWT аутентификацией.",
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -69,6 +69,8 @@ DB_NAME = "database.db"
 async def startup_event():
     app.state.db = await aiosqlite.connect(DB_NAME)
     app.state.db.row_factory = aiosqlite.Row
+    
+    # --- Таблица чатов ---
     await app.state.db.execute('''
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,11 +82,12 @@ async def startup_event():
         )
     ''')
     
+    # *** ИЗМЕНЕНИЕ: Новая таблица пользователей ***
     await app.state.db.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            login TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
+            username TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL
         )
     ''')
     await app.state.db.commit()
@@ -95,8 +98,118 @@ async def shutdown_event():
     await app.state.db.close()
     print("🧹 Соединение с базой закрыто.")
 
+# --- ********************************* ---
+# --- *** НОВЫЙ БЛОК: АУТЕНТИФИКАЦИЯ *** ---
+# --- ********************************* ---
+
+# --- Конфигурация безопасности ---
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("Переменная окружения JWT_SECRET_KEY не установлена. (e.g., openssl rand -hex 32)")
+
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 часа
+
+# Контекст для хеширования паролей
+
+
+# Схема OAuth2 (для Depends)
+# /token - это эндпоинт, который мы создадим для получения токена
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# --- Модели Pydantic для аутентификации ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    username: str # *** ИЗМЕНЕНИЕ: Добавляем имя пользователя в ответ
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class User(BaseModel):
+    username: str
+
+class UserInDB(User):
+    hashed_password: str
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+# --- Утилиты аутентификации ---
+
+# --- ИЗМЕНЕНИЕ: Это БЛОКИРУЮЩИЕ функции (CPU-bound) ---
+# Мы не делаем их 'async def', но будем вызывать их через to_thread
+def verify_password(plain_password, hashed_password):
+    try:
+        ph.verify(hashed_password, plain_password)
+        return True
+    except VerifyMismatchError:
+        return False
+
+def get_password_hash(password):
+    return ph.hash(password)
+# --- Конец блокирующих функций ---
+
+
+async def get_user_from_db(username: str) -> Optional[UserInDB]:
+    db = get_db()
+    async with db.execute("SELECT username, hashed_password FROM users WHERE username = ?", (username,)) as cursor:
+        user_row = await cursor.fetchone()
+    if user_row:
+        return UserInDB(**user_row)
+    return None
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+# --- Зависимость (Dependency) для защиты эндпоинтов ---
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """
+    Декодирует JWT токен, извлекает ID пользователя (sub)
+    и возвращает данные пользователя.
+    Вызовет 401, если токен невалиден.
+    """
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        # --- ИЗМЕНЕНИЕ: Выполняем быструю (sync) CPU-операцию в to_thread
+        # Хотя JWT быстр, это "полностью" асинхронный подход
+        payload = await asyncio.to_thread(
+            jwt.decode, token, SECRET_KEY, [ALGORITHM]
+        )
+        
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+    
+    user = await get_user_from_db(token_data.username)
+    if user is None:
+        raise credentials_exception
+    
+    # *** ИЗМЕНЕНИЕ: Возвращаем словарь с именем пользователя ***
+    # Это позволит нам использовать 'user['username']' в защищенных маршрутах
+    return {"username": user.username}
+
+# --- *********************************** ---
+# --- *** КОНЕЦ БЛОКА АУТЕНТИФИКАЦИИ *** ---
+# --- *********************************** ---
+
+
 # --- Системные промпты (Личности) ---
-# (Без изменений, SEARCH_INSTRUCTION по-прежнему использует {nickname})
 SEARCH_INSTRUCTION = (
     "\n\n**Важное правило:** Если в начале твоего контекста предоставлены 'Результаты Поиска' или 'Контекст, извлеченный из URL' "
     "или 'Контекст, извлеченный из прикрепленного файла', "
@@ -110,13 +223,13 @@ SEARCH_INSTRUCTION = (
     "5. [Название источника 5](URL)\n"
     "Не ссылайся на 'Результаты Поиска' в самом тексте ответа (не пиши 'согласно поиску...'). "
     "Если результатов поиска или URL/файла нет, отвечай, используя свои знания."
-    "\n\n**О пользователе:** Ты общаешься с пользователем по имени **{nickname}**. "
-    "Будь вежлив и можешь обращаться к нему по имени, если это уместно (например, 'Здравствуйте, {nickname}!' или 'Рад помочь, {nickname}.')."
 )
+
 DEFAULT_PROMPT = {
     "role": "system",
     "content": "Вы — PNIbot, помощник по ведению малого бизнеса. Ваша задача — отвечать на вопросы, связанные с бизнесом, маркетингом, финансами и юриспруденцией. Будьте профессиональны и лаконичны." + SEARCH_INSTRUCTION
 }
+# ... (Остальные PERSONALITY_PROMPTS без изменений) ...
 PERSONALITY_PROMPTS = {
     "default": DEFAULT_PROMPT,
     "marketing": {
@@ -125,14 +238,14 @@ PERSONALITY_PROMPTS = {
     },
     "legal": {
         "role": "system",
-        "content": "Вы — PNIbot, помощник по юридическим вопросам. Вы предоставляете ОБЩУЮ информацию по регистрации бизнеса, налогам, контрактам и интеллектуальной собственности. ВАЖНО: Всегда напоминайте пользователю (его зовут {nickname}), что вы не даете юридических консультаций (legal advice) и что для решения конкретной проблемы необходимо обратиться к квалифицированному юристу." + SEARCH_INSTRUCTION
+        "content": "Вы — PNIbot, помощник по юридическим вопросам. Вы предоставляете ОБЩУЮ информацию по регистрации бизнеса, налогам, контрактам и интеллектуальной собственности. ВАЖНО: Всегда напоминайте пользователю, что вы не даете юридических консультаций (legal advice) и что для решения конкретной проблемы необходимо обратиться к квалифицированному юристу." + SEARCH_INSTRUCTION
     },
     "analyst": {
         "role": "system",
         "content": "Вы — PNIbot, бизнес-аналитик. Вы помогаете анализировать бизнес-идеи, оценивать рыночные ниши, составлять фин. модели и SWOT-анализ. Фокусируйтесь на данных, цифрах и структурированных ответах (например, списки, таблицы)." + SEARCH_INSTRUCTION
     }
 }
-# (ANALYSIS_PLAN_PROMPT_TEMPLATE без изменений)
+
 ANALYSIS_PLAN_PROMPT_TEMPLATE = """
 Ты — ИИ-ассистент, принимающий решения (Llama).
 Твоя задача — проанализировать последний запрос пользователя и историю чата, чтобы составить план ответа.
@@ -178,41 +291,25 @@ ANALYSIS_PLAN_PROMPT_TEMPLATE = """
 Твой JSON-ответ:
 """
 
-# --- Модели Pydantic ---
-
-class AuthRequest(BaseModel):
-    login: str
-    pass_hash: str
-
-# *** ИЗМЕНЕНИЕ: Модели для JWT ***
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    nickname: str
-
-class TokenData(BaseModel):
-    login: Optional[str] = None
-
-class User(BaseModel):
-    login: str
-# *** КОНЕЦ ИЗМЕНЕНИЯ ***
-
-# *** ИЗМЕНЕНИЕ: Модели запросов больше не содержат user_id ***
+# --- Модели ---
 class ChatHistoryRequest(BaseModel):
+    # *** ИЗМЕНЕНИЕ: user_id больше не нужен, мы берем его из токена ***
     chat_id: str
 
-# (UserIdRequest больше не нужен)
+# *** ИЗМЕНЕНИЕ: UserIdRequest больше не нужен, мы используем токен ***
+# class UserIdRequest(BaseModel):
+#     user_id: str
 
 # --- Утилита для доступа к БД ---
 def get_db():
     return app.state.db
 
 # --- Функции работы с БД ---
-# (Без изменений: _get_chat_from_db, _update_chat_in_db)
-async def _get_chat_from_db(chat_id: str) -> Dict[str, Any] | None:
+async def _get_chat_from_db(chat_id: str, user_id: str) -> Dict[str, Any] | None:
     db = get_db()
+    # *** ИЗМЕНЕНИЕ: Добавлена проверка user_id при поиске чата ***
     async with db.execute(
-        "SELECT user_id, chat_name, messages FROM chats WHERE chat_id = ?", (chat_id,)
+        "SELECT user_id, chat_name, messages FROM chats WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
     ) as cursor:
         row = await cursor.fetchone()
 
@@ -226,11 +323,12 @@ async def _get_chat_from_db(chat_id: str) -> Dict[str, Any] | None:
         }
     return None
 
+
 async def _update_chat_in_db(chat_id: str, user_id: str, chat_name: str,
                              messages: List[Dict[str, str]], is_new_chat: bool = False):
     db = get_db()
     messages_json = json.dumps(messages)
-    updated_at = datetime.now(timezone.utc).isoformat()
+    updated_at = datetime.now().isoformat()
 
     if is_new_chat:
         await db.execute("""
@@ -238,53 +336,16 @@ async def _update_chat_in_db(chat_id: str, user_id: str, chat_name: str,
             VALUES (?, ?, ?, ?, ?)
         """, (user_id, chat_id, chat_name, messages_json, updated_at))
     else:
+        # *** ИЗМЕНЕНИЕ: Добавлена проверка user_id при обновлении ***
         await db.execute("""
             UPDATE chats SET chat_name = ?, messages = ?, updated_at = ?
-            WHERE chat_id = ?
-        """, (chat_name, messages_json, updated_at, chat_id))
+            WHERE chat_id = ? AND user_id = ?
+        """, (chat_name, messages_json, updated_at, chat_id, user_id))
 
     await db.commit()
-    
-# *** ИЗМЕНЕНИЕ: Функции для JWT Аутентификации ***
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Не удалось проверить учетные данные",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        login: str = payload.get("sub")
-        if login is None:
-            raise credentials_exception
-        token_data = TokenData(login=login)
-    except JWTError:
-        raise credentials_exception
-    
-    # (В реальном приложении можно было бы еще раз проверить юзера в БД)
-    # db = get_db() ...
-    
-    if token_data.login is None:
-        raise credentials_exception
-    
-    return User(login=token_data.login)
-# *** КОНЕЦ ИЗМЕНЕНИЯ ***
 
 # --- Логика фильтрации и стриминга ---
-
-# (Без изменений: _analyze_and_plan)
+# ... (Функции _analyze_and_plan, _fetch_google_doc_content, _fetch_and_parse, _search_duckduckgo, _stream_canned_response - без изменений) ...
 async def _analyze_and_plan(user_query: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
     """
     Использует Cerebras Llama для ОДНОВРЕМЕННОЙ
@@ -296,20 +357,21 @@ async def _analyze_and_plan(user_query: str, history: List[Dict[str, str]]) -> D
     """
     history_str = "\n".join([f"{m['role']}: {m['content'][:100]}..." for m in history])
     prompt = ANALYSIS_PLAN_PROMPT_TEMPLATE.format(
-        date=datetime.now(timezone.utc).strftime("%d.%m.%Y"),
+        date=datetime.now().strftime("%d.%m.%Y"),
         history=history_str,
         query=user_query
     )
     
     try:
-        response = client.chat.completions.create(
+        # --- ИЗМЕНЕНИЕ: Используем 'await' для асинхронного клиента ---
+        response = await client.chat.completions.create(
             model=CLASSIFY_MODEL_ID, # Используем Llama
             messages=[
                 {"role": "system", "content": "Ты — ИИ-анализатор. Твоя задача — проанализировать запрос и вернуть ТОЛЬКО JSON-объект с планом действий."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.0,
-            max_tokens=400
+            max_tokens=400 # Увеличим, т.к. промпт и JSON стали сложнее
         )
         
         content = response.choices[0].message.content.strip() # type: ignore
@@ -366,28 +428,35 @@ async def _analyze_and_plan(user_query: str, history: List[Dict[str, str]]) -> D
             "num_results": 0
         }
 
-# (Без изменений: _fetch_google_doc_content, _fetch_and_parse, _search_duckduckgo, _stream_canned_response)
 async def _fetch_google_doc_content(session: aiohttp.ClientSession, url: str) -> str | None:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'}
+    
     doc_match = DOC_RE.search(url)
     sheet_match = SHEET_RE.search(url)
+    
     export_url = None
+    
     if doc_match:
         doc_id = doc_match.group(1)
         export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
     elif sheet_match:
         sheet_id = sheet_match.group(1)
         export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+
     if not export_url:
-        return None
-    MAX_DOC_LENGTH = 3000
+        return None 
+
+    MAX_DOC_LENGTH = 8000
+    
     try:
         print(f"Загрузка Google Doc/Sheet: {export_url}")
         async with session.get(export_url, timeout=7, headers=headers) as response:
             if response.status != 200:
                 return f"[Не удалось загрузить URL: {url} (статус: {response.status})]"
+            
             content_bytes = await response.read()
             text_content = ""
+            
             try:
                 text_content = content_bytes.decode('utf-8')
             except UnicodeDecodeError:
@@ -395,7 +464,9 @@ async def _fetch_google_doc_content(session: aiohttp.ClientSession, url: str) ->
                     text_content = content_bytes.decode('windows-1251')
                 except Exception as e:
                     return f"[Не удалось декодировать контент из {url}: {e}]"
+            
             return text_content[:MAX_DOC_LENGTH] + "..." if len(text_content) > MAX_DOC_LENGTH else text_content
+
     except asyncio.TimeoutError:
         return f"[Не удалось загрузить URL: {url} (тайм-аут)]"
     except Exception as e:
@@ -404,24 +475,37 @@ async def _fetch_google_doc_content(session: aiohttp.ClientSession, url: str) ->
 
 async def _fetch_and_parse(session: aiohttp.ClientSession, url: str) -> str:
     MAX_TEXT_LENGTH = 10000 
+    
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'}
+        
         async with session.get(url, timeout=5, headers=headers) as response:
             if response.status != 200:
                 return f"Не удалось загрузить (статус: {response.status})"
+            
             if 'text/html' not in response.headers.get('Content-Type', ''):
                  return "Контент не является HTML-страницей."
+                 
             html = await response.text()
-            soup = BeautifulSoup(html, 'html.parser')
-            for script_or_style in soup(["script", "style"]):
-                script_or_style.decompose()
-            text = soup.get_text()
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            # --- ИЗМЕНЕНИЕ: BeautifulSoup - блокирующая операция. Выполняем в to_thread ---
+            def parse_html(html_content):
+                soup = BeautifulSoup(html_content, 'html.parser')
+                for script_or_style in soup(["script", "style"]):
+                    script_or_style.decompose()
+                text = soup.get_text()
+                lines = (line.strip() for line in text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                return '\n'.join(chunk for chunk in chunks if chunk)
+
+            text = await asyncio.to_thread(parse_html, html)
+            # --- Конец изменения ---
+            
             if not text:
                 return "Не удалось извлечь текст из HTML."
+            
             return text[:MAX_TEXT_LENGTH] + "..." if len(text) > MAX_TEXT_LENGTH else text
+
     except asyncio.TimeoutError:
         return "Не удалось загрузить (тайм-аут)."
     except Exception as e:
@@ -432,117 +516,172 @@ async def _search_duckduckgo(query: str, max_results: int) -> str:
     if not 1 <= max_results <= 5:
         print(f"Некорректное кол-во результатов ({max_results}), установлено 3.")
         max_results = 3
+        
     print(f"Выполнение поиска ({max_results} стр.): {query}")
     results_data = []
+    
     try:
         async with aDDGS() as ddgs:
             results = await ddgs.text(query, max_results=max_results)
+            
             if not results:
                 return "Результаты Поиска: Не найдено."
+            
             results_data = results 
+            
     except Exception as e:
         print(f"Ошибка поиска DuckDuckGo: {e}")
         return "Результаты Поиска: Ошибка при выполнении."
-    
+
     formatted_results = ["Результаты Поиска (используй их для ответа, в конце ответа приведи источники):"]
+    
     async with aiohttp.ClientSession() as session:
         tasks = []
         for r in results_data:
             tasks.append(_fetch_and_parse(session, r['href']))
+        
         fetched_contents = await asyncio.gather(*tasks)
+
         for i, (r, fetched_text) in enumerate(zip(results_data, fetched_contents)):
             final_content = fetched_text
             if "Не удалось" in fetched_text or "Ошибка" in fetched_text or "не является HTML" in fetched_text or "Не удалось извлечь" in fetched_text:
-                 final_content = r['body']
+                 final_content = r['body'] 
+            
             formatted_results.append(
                 f"Источник {i+1}: [URL: {r['href']}] [ТЕКСТ: {final_content}]"
             )
+    
     return "\n".join(formatted_results)
 
 async def _stream_canned_response(message: str) -> AsyncGenerator[str, None]:
     yield message
     await asyncio.sleep(0)
 
-# (Без изменений: _stream_cerebras_response, _read_uploaded_file)
+
 async def _stream_cerebras_response(
     system_prompt: Dict[str, str],
     current_messages: List[Dict[str, str]],
     search_context: str | None,
     chat_id: str,
-    user_id: str,
+    user_id: str, # *** ИЗМЕНЕНИЕ: user_id (username) передается из токена ***
     chat_name: str,
     is_new_chat: bool
 ) -> AsyncGenerator[str, None]:
     full_reply_content = []
     final_messages = [system_prompt]
+    
     if search_context:
         final_messages.append({"role": "system", "content": search_context})
+    
     final_messages.extend(current_messages)
     
     try:
-        stream = client.chat.completions.create(
+        # --- ИЗМЕНЕНИЕ: Используем 'await' для асинхронного клиента ---
+        stream = await client.chat.completions.create(
             model=GENERATE_MODEL_ID,
             messages=final_messages, # type: ignore
             stream=True
         )
-        for chunk in stream:
+        
+        # --- ИЗМЕНЕНИЕ: Используем 'async for' для асинхронного стрима ---
+        async for chunk in stream:
             content = chunk.choices[0].delta.content
             if content:
                 full_reply_content.append(content)
                 yield content
+
     except Exception as e:
         print(f"Ошибка API Cerebras (стрим): {e}")
         yield f"Ошибка API: {str(e)}"
+    
     finally:
         full_message = "".join(full_reply_content)
+        
         if full_message:
             current_messages.append({"role": "assistant", "content": full_message})
+            
             await _update_chat_in_db(
                 chat_id=chat_id,
-                user_id=user_id,
+                user_id=user_id, # *** ИЗМЕНЕНИЕ: Используем user_id из токена ***
                 chat_name=chat_name,
                 messages=current_messages,
                 is_new_chat=is_new_chat
             )
 
+
+# --- ИЗМЕНЕНИЕ: Выносим блокирующие (CPU/IO) функции парсинга ---
+# Они будут вызваны в _read_uploaded_file через asyncio.to_thread
+
+def _parse_xlsx(content_bytes: bytes) -> str:
+    """Блокирующая функция парсинга XLSX."""
+    bytes_io = io.BytesIO(content_bytes)
+    xls = pd.ExcelFile(bytes_io, engine='openpyxl')
+    all_sheets = []
+    for sheet_name in xls.sheet_names:
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+        all_sheets.append(f"--- Лист: {sheet_name} ---\n{df.to_csv(index=False)}")
+    return "\n\n".join(all_sheets)
+
+def _parse_docx(content_bytes: bytes) -> str:
+    """Блокирующая функция парсинга DOCX."""
+    bytes_io = io.BytesIO(content_bytes)
+    doc = docx.Document(bytes_io)
+    all_paragraphs = [p.text for p in doc.paragraphs]
+    return "\n".join(all_paragraphs)
+
+def _parse_pdf(content_bytes: bytes) -> str:
+    """Блокирующая функция парсинга PDF."""
+    bytes_io = io.BytesIO(content_bytes)
+    reader = PdfReader(bytes_io)
+    all_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+    return "\n\n--- Новая страница ---\n\n".join(all_pages)
+
+# --- Конец блокирующих функций парсинга ---
+
+
 MAX_FILE_CONTEXT_LENGTH = 15000
 async def _read_uploaded_file(file: UploadFile) -> str:
     filename = file.filename or ""
+    
     if '.' not in filename:
         extension = 'txt'
     else:
         extension = filename.rsplit('.', 1)[-1].lower()
+
     print(f"Парсинг файла: {filename} (тип: {extension})")
+    
+    # file.read() уже асинхронный
     content_bytes = await file.read()
     text_content = None
+
     try:
+        # --- ИЗМЕНЕНИЕ: Выполняем блокирующий парсинг в thread pool ---
         if extension == 'xlsx':
-            bytes_io = io.BytesIO(content_bytes)
-            xls = pd.ExcelFile(bytes_io, engine='openpyxl')
-            all_sheets = []
-            for sheet_name in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet_name)
-                all_sheets.append(f"--- Лист: {sheet_name} ---\n{df.to_csv(index=False)}")
-            text_content = "\n\n".join(all_sheets)
+            text_content = await asyncio.to_thread(_parse_xlsx, content_bytes)
+        
         elif extension == 'docx':
-            bytes_io = io.BytesIO(content_bytes)
-            doc = docx.Document(bytes_io)
-            all_paragraphs = [p.text for p in doc.paragraphs]
-            text_content = "\n".join(all_paragraphs)
+            text_content = await asyncio.to_thread(_parse_docx, content_bytes)
+
         elif extension == 'pdf':
-            bytes_io = io.BytesIO(content_bytes)
-            reader = PdfReader(bytes_io)
-            all_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
-            text_content = "\n\n--- Новая страница ---\n\n".join(all_pages)
+            text_content = await asyncio.to_thread(_parse_pdf, content_bytes)
+        
         elif extension in ('txt', 'csv', 'html') or '.' not in filename:
+            # Декодирование - быстрая операция, можно оставить в основном потоке
             try:
                 text_content = content_bytes.decode('utf-8')
             except UnicodeDecodeError:
                 text_content = content_bytes.decode('windows-1251')
+            
             if extension == 'html':
-                soup = BeautifulSoup(text_content, 'html.parser')
-                text_content = soup.get_text(separator="\n", strip=True)
+                # BeautifulSoup может быть медленным, лучше в to_thread
+                def parse_html_text(html_text):
+                    soup = BeautifulSoup(html_text, 'html.parser')
+                    return soup.get_text(separator="\n", strip=True)
+                
+                text_content = await asyncio.to_thread(parse_html_text, text_content)
+            
         else:
+            # Попытка декодировать неизвестные типы как текст
             try:
                 text_content = content_bytes.decode('utf-8')
             except UnicodeDecodeError:
@@ -550,113 +689,133 @@ async def _read_uploaded_file(file: UploadFile) -> str:
                     text_content = content_bytes.decode('windows-1251')
                 except UnicodeDecodeError:
                     print(f"Файл {filename} имеет неизвестное расширение и не является текстом.")
-                    return None
+                    return None 
+
     except Exception as e:
         print(f"Ошибка парсинга файла {filename} (ext: {extension}): {e}")
         return None
+
     if text_content is None:
         return None
+        
     if len(text_content) > MAX_FILE_CONTEXT_LENGTH:
         text_content = text_content[:MAX_FILE_CONTEXT_LENGTH] + \
                        f"\n... [СОДЕРЖИМОЕ ФАЙЛА '{filename}' ОБРЕЗАНО] ..."
-    return text_content
     
+    return text_content
+# --- Конец _read_uploaded_file ---
+
+
 # --- Маршруты ---
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    # Этот маршрут теперь просто отдает HTML.
+    # Клиент (JS) сам решит, показывать модальное окно или нет.
     return FileResponse("templates/index.html", media_type="text/html")
 
-# *** ИЗМЕНЕНИЕ: Маршруты авторизации теперь возвращают JWT токен ***
+# --- *** НОВЫЕ МАРШРУТЫ АУТЕНТИФИКАЦИИ *** ---
 
-@app.post("/register", response_model=Token)
-async def register_user(req: AuthRequest):
+@app.post("/register", status_code=201)
+async def register_user(user_create: UserCreate):
+    """
+    Регистрирует нового пользователя.
+    """
     db = get_db()
-    async with db.execute("SELECT id FROM users WHERE login = ?", (req.login,)) as cursor:
-        existing_user = await cursor.fetchone()
+    existing_user = await get_user_from_db(user_create.username)
     if existing_user:
-        raise HTTPException(status_code=400, detail="Этот логин уже занят.")
-    try:
-        await db.execute(
-            "INSERT INTO users (login, password_hash) VALUES (?, ?)",
-            (req.login, req.pass_hash)
+        raise HTTPException(status_code=400, detail="Пользователь с таким именем уже существует")
+    
+    # --- ИЗМЕНЕНИЕ: Хеширование - CPU-bound, выполняем в to_thread ---
+    hashed_password = await asyncio.to_thread(
+        get_password_hash, user_create.password
+    )
+    # --- Конец изменения ---
+    
+    await db.execute(
+        "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
+        (user_create.username, hashed_password)
+    )
+    await db.commit()
+    
+    return {"message": "Пользователь успешно зарегистрирован"}
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Принимает username и password из формы,
+    проверяет их и возвращает JWT токен.
+    """
+    user = await get_user_from_db(form_data.username)
+    
+    # --- ИЗМЕНЕНИЕ: Проверка пароля - CPU-bound, выполняем в to_thread ---
+    is_verified = False
+    if user:
+        is_verified = await asyncio.to_thread(
+            verify_password, form_data.password, user.hashed_password
         )
-        await db.commit()
-    except Exception as e:
-        print(f"Ошибка регистрации: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка сервера при регистрации: {e}")
+    # --- Конец изменения ---
+
+    if not user or not is_verified:
+        raise HTTPException(
+            status_code=401,
+            detail="Неверный логин или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
-    # *** НОВОЕ: Сразу логиним и выдаем токен ***
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": req.login}, expires_delta=access_token_expires
+    # --- ИЗМЕНЕНИЕ: Создание JWT - быстрая CPU-операция, тоже в to_thread ---
+    access_token = await asyncio.to_thread(
+        create_access_token, data={"sub": user.username}
     )
-    return {"access_token": access_token, "token_type": "bearer", "nickname": req.login}
-
-
-@app.post("/login", response_model=Token)
-async def login_user(req: AuthRequest):
-    db = get_db()
-    async with db.execute("SELECT password_hash FROM users WHERE login = ?", (req.login,)) as cursor:
-        user = await cursor.fetchone()
-        
-    if not user or user["password_hash"] != req.pass_hash:
-        raise HTTPException(status_code=401, detail="Неверный логин или пароль.")
-        
-    # *** НОВОЕ: Выдаем токен ***
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": req.login}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer", "nickname": req.login}
+    # --- Конец изменения ---
     
-# *** КОНЕЦ ИЗМЕНЕНИЙ В АВТОРИЗАЦИИ ***
+    # *** ИЗМЕНЕНИЕ: Возвращаем имя пользователя вместе с токеном ***
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer", 
+        "username": user.username
+    }
 
+# --- *** ЗАЩИЩЕННЫЕ МАРШРУТЫ *** ---
 
-# *** ИЗМЕНЕНИЕ: /send_message_stream теперь защищен и не принимает user_id ***
 @app.post("/send_message_stream")
 async def send_message_stream(
+    # *** ИЗМЕНЕНИЕ: user_id УДАЛЕН из Form, добавлен current_user из токена ***
+    current_user: dict = Depends(get_current_user),
     message: str = Form(""),
     chat_id: str = Form(...),
-    file: Optional[UploadFile] = File(None),
-    current_user: User = Depends(get_current_user) # <-- НОВЫЙ ЗАЩИЩЕННЫЙ ПАРАМЕТР
+    file: Optional[UploadFile] = File(None)
 ):
     """
-    Обрабатывает сообщение (из FormData), выполняет единый анализ (фильтр + поиск),
-    выполняет поиск (если нужно) и стримит ответ.
-    Использует `current_user` из токена.
+    Обрабатывает сообщение, выполняет анализ, поиск (если нужно) и стримит ответ.
+    Теперь защищено: user_id берется из JWT токена.
     """
     
-    # *** НОВОЕ: user_id берется из токена ***
-    user_id = current_user.login
+    # *** ИЗМЕНЕНИЕ: user_id (username) берется из токена ***
+    user_id = current_user['username']
     
+    # 1. Чтение файла
     file_content: str | None = None
     file_name: str | None = None
 
     if file:
         file_name = file.filename
-        file_content = await _read_uploaded_file(file)
+        file_content = await _read_uploaded_file(file) 
     
     if not message and not file_content:
-        raise HTTPException(status_code=400, detail="Сообщение или файл должны присутствовать (или файл не удалось прочитать).")
+        raise HTTPException(status_code=400, detail="Сообщение или файл должны присутствовать.")
         
-    if not chat_id:
-        raise HTTPException(status_code=400, detail="chat_id обязателен.")
-
-    chat_data = await _get_chat_from_db(chat_id)
+    # 2. Получение данных чата
+    # *** ИЗМЕНЕНИЕ: _get_chat_from_db теперь также требует user_id для безопасности ***
+    chat_data = await _get_chat_from_db(chat_id, user_id)
     is_new_chat = chat_data is None
 
     if is_new_chat:
         current_messages = []
     else:
-        # *** ПРОВЕРКА БЕЗОПАСНОСТИ: Убедимся, что юзер владеет чатом ***
-        if chat_data["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Доступ к чату запрещен.")
         chat_name = chat_data["chat_name"]
         current_messages = chat_data["messages"]
         
-    # (Дальнейшая логика _send_message_stream без изменений, 
-    #  т.к. user_id теперь корректно установлен)
-
     # 3. Обработка прикрепленного файла
     if file_content and file_name:
         print(f"Обнаружен прикрепленный файл: {file_name}")
@@ -666,7 +825,7 @@ async def send_message_stream(
         }
         current_messages.append(file_context_message)
 
-    # 4. Создание *видимого* сообщения пользователя
+    # 4. Создание видимого сообщения пользователя
     visible_user_message_content = message
     if file_name:
         if visible_user_message_content:
@@ -680,17 +839,20 @@ async def send_message_stream(
     has_google_links = False
     link_context_message = None
 
-    if urls and not file_content:
+    if urls and not file_content: 
         print(f"Найдено {len(urls)} URL (файл не прикреплен), загрузка...")
         async with aiohttp.ClientSession() as session:
             tasks = []
             for url in urls:
                 tasks.append(_fetch_google_doc_content(session, url))
+            
             fetched_contents = await asyncio.gather(*tasks)
+            
             for i, content in enumerate(fetched_contents):
-                if content:
+                if content: 
                     has_google_links = True
                     fetched_link_content.append(f"Контент из {urls[i]}:\n{content}")
+        
         if has_google_links:
             combined_link_content = "\n\n---\n\n".join(fetched_link_content)
             link_context_message = {
@@ -708,6 +870,7 @@ async def send_message_stream(
 
     # 7. Анализ, Фильтрация, Решение о поиске
     analysis = await _analyze_and_plan(visible_user_message_content, current_messages[-5:])
+    
     is_relevant = analysis.get("is_business", False)
     
     # 8. Если фильтр не пройден
@@ -720,11 +883,21 @@ async def send_message_stream(
 
     # 9. Определение "личности"
     final_personality_key = analysis.get("personality", "default")
-    
-    # *** ИЗМЕНЕНИЕ: user_id - это и есть nickname ***
+    # --- ИЗМЕНЕНИЕ: Получаем базовый промпт ---
     base_system_prompt = PERSONALITY_PROMPTS.get(final_personality_key, DEFAULT_PROMPT)
-    formatted_content = base_system_prompt["content"].format(nickname=user_id)
-    system_prompt = {"role": base_system_prompt["role"], "content": formatted_content}
+    
+    # --- ИЗМЕНЕНИЕ: Внедряем имя пользователя (логин) в промпт ---
+    # Создаем *копию* словаря, чтобы не изменить оригинал
+    system_prompt = base_system_prompt.copy()
+    user_name = current_user['username'] # user_id это и есть username
+    # Добавляем инструкцию в начало
+    system_prompt['content'] = (
+        f"Ты общаешься с пользователем по имени '{user_name}'. "
+        f"Если это уместно, ты можешь обращаться к нему по имени (например, 'Здраствуйте {user_name}'). "
+        f"{system_prompt['content']}"
+    )
+    # --- Конец изменения ---
+
 
     # 10. Выполнение поиска
     search_context = None
@@ -747,21 +920,25 @@ async def send_message_stream(
     # 12. Возвращаем StreamingResponse
     return StreamingResponse(
         _stream_cerebras_response(
-            system_prompt,
+            system_prompt, # Передаем уже измененный промпт
             current_messages,
             search_context,
             chat_id,
-            user_id, # <-- Передаем user_id из токена
+            user_id, # *** ИЗМЕНЕНИЕ: Передаем user_id из токена ***
             chat_name,
             is_new_chat
         ),
         media_type="text/event-stream"
     )
 
-# *** ИЗМЕНЕНИЕ: /get_chats теперь GET и защищен ***
-@app.get("/get_chats")
-async def get_chats(current_user: User = Depends(get_current_user)):
-    user_id = current_user.login
+
+@app.get("/get_chats") # *** ИЗМЕНЕНИЕ: Меняем на GET, т.к. user_id в токене ***
+async def get_chats(current_user: dict = Depends(get_current_user)):
+    # *** ИЗМЕНЕНИЕ: req (UserIdRequest) больше не нужен ***
+    user_id = current_user['username']
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id не может быть пустым.")
+
     db = get_db()
     chats_list = []
     async with db.execute("""
@@ -771,12 +948,15 @@ async def get_chats(current_user: User = Depends(get_current_user)):
     """, (user_id,)) as cursor:
         async for row in cursor:
             messages = json.loads(row["messages"]) if row["messages"] else []
+            
             last_msg_content = None
             for msg in reversed(messages):
                 if msg.get("role") in ("user", "assistant"):
                     last_msg_content = msg.get("content")
                     break
+            
             last_msg = last_msg_content if last_msg_content else None
+            
             chats_list.append({
                 "id": row["chat_id"],
                 "name": row["chat_name"],
@@ -785,13 +965,20 @@ async def get_chats(current_user: User = Depends(get_current_user)):
             })
     return {"chats": chats_list}
 
-# *** ИЗМЕНЕНИЕ: /get_chat_history защищен и не принимает user_id ***
+
 @app.post("/get_chat_history")
-async def get_chat_history(req: ChatHistoryRequest, current_user: User = Depends(get_current_user)):
-    user_id = current_user.login
-    chat_data = await _get_chat_from_db(req.chat_id)
+async def get_chat_history(
+    req: ChatHistoryRequest, 
+    current_user: dict = Depends(get_current_user)
+):
+    # *** ИЗМЕНЕНИЕ: user_id из токена ***
+    user_id = current_user['username']
     
-    if not chat_data or chat_data["user_id"] != user_id:
+    # *** ИЗМЕНЕНИЕ: _get_chat_from_db теперь проверяет user_id ***
+    chat_data = await _get_chat_from_db(req.chat_id, user_id)
+    if not chat_data:
+        # Не нужно проверять (chat_data["user_id"] != user_id), т.к.
+        # _get_chat_from_db вернет None, если user_id не совпадет
         raise HTTPException(status_code=404, detail="Чат не найден или не принадлежит пользователю.")
     
     visible_messages = [
@@ -805,12 +992,20 @@ async def get_chat_history(req: ChatHistoryRequest, current_user: User = Depends
         "messages": visible_messages
     }
 
-# *** ИZМЕНЕНИЕ: /delete_chat защищен и не принимает user_id ***
 @app.post("/delete_chat")
-async def delete_chat(req: ChatHistoryRequest, current_user: User = Depends(get_current_user)):
-    user_id = current_user.login
+async def delete_chat(
+    req: ChatHistoryRequest, 
+    current_user: dict = Depends(get_current_user)
+):
+    # *** ИЗМЕНЕНИЕ: user_id из токена ***
+    user_id = current_user['username']
+    
+    if not req.chat_id:
+        raise HTTPException(status_code=400, detail="chat_id обязателен.")
+
     db = get_db()
     
+    # *** ИЗМЕНЕНИЕ: Проверяем, что чат принадлежит пользователю ПЕРЕД удалением ***
     async with db.execute(
         "SELECT user_id FROM chats WHERE chat_id = ?", (req.chat_id,)
     ) as cursor:
@@ -819,6 +1014,7 @@ async def delete_chat(req: ChatHistoryRequest, current_user: User = Depends(get_
     if not row or row["user_id"] != user_id:
         raise HTTPException(status_code=404, detail="Чат не найден или не принадлежит пользователю.")
     
+    # Если проверка пройдена, удаляем
     await db.execute("DELETE FROM chats WHERE chat_id = ?", (req.chat_id,))
     await db.commit()
     
