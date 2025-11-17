@@ -66,6 +66,7 @@ settings.py
 local_settings.py
 *.db
 bin/
+bin
 data/
 include/
 lib/
